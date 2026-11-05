@@ -91,7 +91,10 @@ Engine and pack checks (Node, no browser):
 node test/engine.test.js
 node test/guarantee.test.js
 node test/tree.test.js
+node test/tree-status.test.js
 ```
+
+`node test/tree-ui.js` starts its own static server and clicks Build tree in Chrome (same `puppeteer-core` dependency as the smokes below). It covers a click while the pack is still loading, a click after the pack fails, a bad opener, and a worker failure whose sync fallback also throws.
 
 Browser smoke tests expect this site on port 18432 and Chrome plus `puppeteer-core` (`npm install puppeteer-core`, or the older path `/workspace/dst-map/node_modules/puppeteer-core`):
 
