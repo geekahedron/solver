@@ -15,6 +15,8 @@
  * is only the exhaustive worst-case policy. On a long list, hard mode picks
  * later guesses from a letter-coverage shortlist so the tree can finish in
  * the browser; that tree is marked approximate.
+ *
+ * planOpenerScan orders the starters the Tree page tries until one strategyFits.
  */
 (function (root) {
   'use strict';
@@ -792,6 +794,47 @@
     };
 
     return { summary: summary, depths: depths, root: rootNode, allGreen: allGreen };
+  };
+
+  // Order for "try starters until one fits n".
+  // picks: spec.openers that pass spec.has, original order, duplicates skipped.
+  // When the remaining list is non-empty and no longer than extraMaxRemaining,
+  // extras continue with spec.remaining, then spec.dict, skipping anything
+  // already queued, up to extraCap further words. The caller decides what
+  // dict means (probes before answers already ruled out, for the Tree page).
+  Core.planOpenerScan = function (spec) {
+    spec = spec || {};
+    var openers = spec.openers || [];
+    var has = spec.has || function () { return false; };
+    var remaining = spec.remaining || [];
+    var dict = spec.dict || [];
+    var extraMaxRemaining = spec.extraMaxRemaining == null ? 16 : spec.extraMaxRemaining;
+    var extraCap = spec.extraCap == null ? 40 : spec.extraCap;
+    var seen = {};
+    var picks = [];
+    var extra = [];
+    var i, w;
+    function take(word, into) {
+      if (!word || seen[word] || !has(word)) return false;
+      if (into === extra && extra.length >= extraCap) return false;
+      seen[word] = 1;
+      into.push(word);
+      return true;
+    }
+    for (i = 0; i < openers.length; i++) take(openers[i], picks);
+    var continued = remaining.length > 0 && remaining.length <= extraMaxRemaining;
+    if (continued) {
+      for (i = 0; i < remaining.length; i++) take(remaining[i], extra);
+      for (i = 0; i < dict.length && extra.length < extraCap; i++) take(dict[i], extra);
+    }
+    return {
+      picks: picks,
+      extra: extra,
+      all: picks.concat(extra),
+      continued: continued,
+      extraCap: extraCap,
+      extraMaxRemaining: extraMaxRemaining
+    };
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = Core;
