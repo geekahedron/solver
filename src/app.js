@@ -118,15 +118,19 @@
   $('remTheo').addEventListener('toggle', renderRemaining);
 
   function fmt(x, d) { return (Math.round(x * Math.pow(10, d)) / Math.pow(10, d)).toFixed(d); }
+  function stepsText(s) {
+    if (!s || s.steps == null || s.steps !== s.steps || !isFinite(s.steps)) return '–';
+    return fmt(s.steps, 2) + (s.approx ? '≈' : '');
+  }
   function renderSuggestions(top) {
     lastTop = top;
     var tb = $('sugTable').tBodies[0];
     tb.innerHTML = top.map(function (s, i) {
       var k = engine.keys[s.idx];
-      return '<tr data-key="' + esc(k) + '"' + (k === selectedKey ? ' class="sel"' : '') + '><td>' + (i + 1) + '</td><td>' + esc(k) + '</td><td>' + fmt(s.exp, 2) +
+      return '<tr data-key="' + esc(k) + '"' + (k === selectedKey ? ' class="sel"' : '') + '><td>' + (i + 1) + '</td><td>' + esc(k) + '</td><td>' + stepsText(s) + '</td><td>' + fmt(s.exp, 2) +
         '</td><td>' + s.worst + '</td><td>' + s.splits + '</td><td>' + fmt(s.ent, 2) + '</td><td>' + (s.cand ? '<span class="ok">✓</span>' : '') + '</td></tr>';
     }).join('');
-    var col = { avg: 2, minimax: 3, splits: 4, entropy: 5 }[cfg.mode];
+    var col = { steps: 2, avg: 3, minimax: 4, splits: 5, entropy: 6 }[cfg.mode];
     Array.prototype.forEach.call($('sugTable').tHead.rows[0].cells, function (th, i) { th.classList.toggle('sortcol', i === col); });
   }
   $('sugTable').tBodies[0].addEventListener('click', function (e) {
@@ -158,8 +162,11 @@
       hardBreak = !(cfg.hard === 'wordle' ? engine.wordleHardOk(gi, clues) : engine.consistentAllIndex(gi, clues));
     }
     $('bdTitle').innerHTML = '· ' + tilesHTML(g.syms, null);
+    var scoredRow = null;
+    for (var si = 0; si < lastTop.length; si++) if (engine.keys[lastTop[si].idx] === g.key) scoredRow = lastTop[si];
+    var stepsBit = (scoredRow && stepsText(scoredRow) !== '–') ? (' · <b>' + stepsText(scoredRow) + '</b> expected guesses to solve') : '';
     $('bdSummary').innerHTML = n ? ('If you guess <b>' + esc(g.key.toUpperCase()) + '</b> with ' + n + ' answers possible: ' + rows.length + ' possible results · expected ' + fmt(n ? sumSq / n : 0, 2) +
-      ' left · worst case ' + worst + ' · ' + fmt(ent, 2) + ' bits' + (buckets.has(allGreen) ? ' · <span class="ok">could be the answer</span>' : '') +
+      ' left · worst case ' + worst + ' · ' + fmt(ent, 2) + ' bits' + stepsBit + (buckets.has(allGreen) ? ' · <span class="ok">could be the answer</span>' : '') +
       (hardBreak ? ' · <span class="warn">breaks hard mode</span>' : '') +
       (note ? ' · <span class="warn">' + esc(note) + '</span>' : '')) : 'No answers remain — check your clues.';
     var html = rows.map(function (r) {
@@ -219,6 +226,24 @@
     return 'known answers';
   }
   function scheduleScore() { clearTimeout(scoreTimer); scoreTimer = setTimeout(runScore, 120); }
+  function stepsPayload() {
+    var dict = null;
+    if (cfg.guessMode !== 'answersOnly') {
+      if (cfg.valid === 'answers' && cfg.guessMode !== 'any') dict = Int32Array.from(engine.knownIdx);
+      else {
+        dict = new Int32Array(engine.nWords);
+        for (var i = 0; i < engine.nWords; i++) dict[i] = i;
+      }
+    }
+    return {
+      guessMode: cfg.guessMode,
+      hard: cfg.hard,
+      dict: dict,
+      clues: clues.map(function (c) {
+        return { ids: Array.prototype.slice.call(c.ids), pat: c.pat, digits: c.digits.slice() };
+      })
+    };
+  }
   function runScore() {
     var layerHasRows = false;
     if (engine) {
@@ -238,13 +263,26 @@
     remaining.forEach(function (i) { if (i < isCand.length) isCand[i] = 1; });
     var id = ++reqId;
     var msg = { id: id, U: engine.U, L: cfg.L, K: engine.syms.length, rule: engine.feedbackRule, rem: Int32Array.from(remaining), pool: Int32Array.from(bp.pool), isCand: isCand, mode: cfg.mode, topN: cfg.top };
+    if (cfg.mode === 'steps') msg.steps = stepsPayload();
     var label = 'Scoring ' + bp.pool.length.toLocaleString() + ' guesses × ' + remaining.length.toLocaleString() + ' ' + layerLabel() +
-      (bp.pruned ? ' (pre-filtered from ' + bp.total.toLocaleString() + ' by letter coverage — raise “Max guesses to score” for a full search)' : '');
+      (bp.pruned ? ' (pre-filtered from ' + bp.total.toLocaleString() + ' by letter coverage — raise “Max guesses to score” for a full search)' : '') +
+      (cfg.mode === 'steps' ? ' · expected steps' : '');
     $('scoreStatus').innerHTML = esc(label) + '…<div class="bar"><i id="pbar"></i></div>';
     var done = function (top, ms) {
       if (id !== reqId) return;
       renderSuggestions(top);
-      $('scoreStatus').textContent = label.replace('Scoring', 'Scored') + ' in ' + ms + ' ms.';
+      var tail = '';
+      if (cfg.mode === 'steps') {
+        var approxN = 0, exactN = 0;
+        top.forEach(function (s) {
+          if (s.steps == null || !isFinite(s.steps)) return;
+          if (s.approx) approxN++; else exactN++;
+        });
+        if (approxN && !exactN) tail = ' Steps are approximate (see the note under the table).';
+        else if (approxN) tail = ' Steps marked ≈ are approximate.';
+        else if (exactN) tail = ' Steps are exact for this set.';
+      }
+      $('scoreStatus').textContent = label.replace('Scoring', 'Scored') + ' in ' + ms + ' ms.' + tail;
       if ((autoSel || !selectedKey) && top.length) { $('bdGuess').value = engine.keys[top[0].idx]; analyze(engine.keys[top[0].idx], false); }
       else if (selectedKey) analyze(selectedKey, false);
     };
@@ -254,7 +292,14 @@
       worker = new Worker('worker.js');
       worker.onmessage = function (e) {
         var d = e.data; if (d.id !== reqId) return;
-        if (d.type === 'progress') { var b = $('pbar'); if (b) b.style.width = (100 * d.done / d.total) + '%'; }
+        if (d.type === 'progress') {
+          var b = $('pbar');
+          if (b) {
+            var frac = d.done / Math.max(1, d.total);
+            var pct = d.phase === 'steps' ? 70 + 30 * frac : (cfg.mode === 'steps' ? 70 : 100) * frac;
+            b.style.width = pct + '%';
+          }
+        }
         else { done(d.top, d.ms); worker.terminate(); worker = null; }
       };
       worker.onerror = function () { worker = null; syncScore(); };
@@ -264,6 +309,12 @@
       setTimeout(function () {
         var t0 = Date.now();
         var sc = Core.scorePool(msg.U, msg.L, msg.K, msg.rule, msg.rem, msg.pool, msg.isCand);
+        if (msg.mode === 'steps') {
+          var st = msg.steps || {};
+          Core.attachExpectedSteps(sc, msg.U, msg.L, msg.K, msg.rule, msg.rem, msg.pool, {
+            guessMode: st.guessMode, hard: st.hard, dict: st.dict, clues: st.clues || []
+          });
+        }
         done(Core.rank(sc, msg.mode, msg.topN), Date.now() - t0);
       }, 10);
     }

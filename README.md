@@ -1,6 +1,6 @@
 # Solver
 
-Client-side Wordle-style solver. Enter guesses and color clues; it lists the answers still possible and ranks the next guess the way Wordlebot does (expected remaining, entropy, worst case, and pattern splits).
+Client-side Wordle-style solver. Enter guesses and color clues; it lists the answers still possible and ranks the next guess by expected steps to solve, or by the one-ply scores Wordlebot also shows (expected remaining, entropy, worst case, and pattern splits).
 
 The live page is [https://geekahedron.com/tools/solver/](https://geekahedron.com/tools/solver/).
 
@@ -56,6 +56,16 @@ One pack describes a game. The page then toggles how you play it:
 - **Page** — Scenario (remaining lists), Analysis (pattern partitions and scores), or both.
 
 The English presets are that one pack: `src/packs/wordle-en.json`, the ENABLE lists, and Wordle `consistent` / feedback. Custom paste and upload still build a pack in the browser. Dungleon, Purrdle, and Mastermind are not playable here; `src/packs/mastermind-sketch.json` only reserves the shape. Details are in [docs/pack-format.md](docs/pack-format.md).
+
+## Expected steps
+
+**Fewest expected steps to solve** ranks a guess by the average number of further guesses until the secret is named. The secret is uniform over the answers still possible — there is no frequency prior. The guess being scored counts as 1. All-green adds nothing more. Any other reply adds the expected guesses needed to finish that smaller set. Later guesses are chosen from the pool the active guess mode and hard-mode rules would actually allow (dictionary, answers only, strict consistency, or Wordle hard).
+
+On a handmade list small enough to sit under the limits below, that number is the exact tree (sets of 2 and 3 answers have a closed form: 1.5 for a pair when either answer is legal, 5/3 when a guess separates all three and hits, otherwise 2). A solved-in-one secret contributes 1.
+
+Openings are not that tree. Exact through 5 answers (at most 64 guesses tried at one of those nodes). A dictionary larger than 280 is cut to that many probes for the whole search, and the answers still in the set are always added back. Every guess in the pool is valued when at most 40 answers remain and the pool has at most 20000 rows; above that, deepen a beam of 18 expected-remaining, 6 entropy, and 6 worst-case guesses. Larger sets continue with the top 1 one-ply pick from 40 candidates. The page marks those values with ≈. Guesses outside the beam stay blank (–), so a guess that loses on every one-ply metric can be missed. Letter-coverage cuts keep remaining answers first, then the guesses that touch the most common letters. “Max guesses to score” still limits which openers enter the beam.
+
+These lists are not the New York Times Wordle lists, and the prior is uniform, so an English opening will not match Wordlebot’s published average.
 
 ## Tests
 

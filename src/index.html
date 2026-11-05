@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Wordle-style Solver · Geekahedron</title>
-<meta name="description" content="A generic, customizable Wordle-style solver: any word list, any length, hard mode, average-case or guaranteed-solve scoring, and Wordlebot-style pattern breakdowns.">
+<meta name="description" content="A generic, customizable Wordle-style solver: any word list, any length, hard mode, and Wordlebot-style scoring (expected steps, expected remaining, entropy, worst case).">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -98,6 +98,7 @@
     <div class="grid3">
       <label>Scoring
         <select id="cfgMode">
+          <option value="steps">Fewest expected steps to solve</option>
           <option value="avg">Fewest expected remaining (average case)</option>
           <option value="entropy">Most information (entropy, bits)</option>
           <option value="minimax">Smallest worst case (guaranteed / minimax)</option>
@@ -141,11 +142,12 @@
     <div id="scoreStatus" class="muted small"></div>
     <div class="tablewrap">
       <table id="sugTable" class="data">
-        <thead><tr><th>#</th><th>Guess</th><th title="Average number of answers left after this guess (0 if it is the answer)">Exp. left</th><th title="Largest group of answers that could be left">Worst</th><th title="Number of distinct result patterns">Patterns</th><th title="Expected information, bits">Bits</th><th title="Could be the answer">Ans?</th></tr></thead>
+        <thead><tr><th>#</th><th>Guess</th><th title="Expected guesses until the secret is found, each remaining answer equally likely. This guess counts as 1. A trailing ≈ was cut down (see the note). – was not deepened.">Steps</th><th title="Average number of answers left after this guess (0 if it is the answer)">Exp. left</th><th title="Largest group of answers that could be left">Worst</th><th title="Number of distinct result patterns">Patterns</th><th title="Expected information, bits">Bits</th><th title="Could be the answer">Ans?</th></tr></thead>
         <tbody></tbody>
       </table>
     </div>
     <p class="muted small">Tap a row to see its full breakdown below. Guess mode is any, dictionary, hard, or answers-only. Wordle hard (the menu above) only forces reused greens and yellows. The solution layer chooses which remaining list the scorer partitions.</p>
+    <p class="muted small" id="stepsHelp">Steps is the expected number of guesses to finish, with each remaining answer equally likely (no frequency weights). The guess you are scoring counts as 1; an all-green reply adds nothing further. Later guesses follow the active guess mode and hard-mode rules. Sets of 2–3 answers use a closed form. Exact through 5 answers (at most 64 guesses tried at one of those nodes). A dictionary larger than 280 is cut to that many probes for the whole search, and the answers still in the set are always added back. Every guess in the pool is valued when at most 40 answers remain and the pool has at most 20000 rows; above that, deepen a beam of 18 expected-remaining, 6 entropy, and 6 worst-case guesses. Larger sets continue with the top 1 one-ply pick from 40 candidates. A trailing ≈ used one of those cuts. Guesses outside the beam show –. These lists are not the NYT Wordle lists, so the number will not match Wordlebot. “Max guesses to score” still limits which openers are deepened.</p>
   </section>
 
   <!-- BREAKDOWN -->

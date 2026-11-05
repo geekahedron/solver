@@ -28,15 +28,24 @@ by the feedback pattern they would produce. Reported metrics:
   Worst      = largest bucket (excluding all-green)
   Patterns   = number of non-empty buckets
   Bits       = Shannon entropy of the bucket distribution
-Modes: fewest expected remaining (average case), most information (entropy),
-smallest worst case (minimax / "guaranteed"), most patterns (splits). Ties prefer
-guesses that could still be the answer.
+  Steps      = expected guesses until the secret is found (this guess counts as 1;
+               all-green adds 0; each remaining answer is equally likely)
+Modes: fewest expected steps to solve, fewest expected remaining (average case),
+most information (entropy), smallest worst case (minimax / "guaranteed"), most
+patterns (splits). Ties prefer guesses that could still be the answer.
 
-Performance: scoring costs |pool| x |remaining|. If the guess pool is larger than
-"Max guesses to score" it is pre-filtered: possible answers (up to half the budget)
-plus the guesses with the best letter / position coverage of the remaining answers.
-Default 12,000 means the 5-letter pack is scored exhaustively.
-Single-step (greedy) scoring only — no full decision-tree search.
+Steps follows the active guess mode and hard-mode rules on later plies. Sets of
+2–3 answers use a closed form.
+Exact through 5 answers (at most 64 guesses tried at one of those nodes). A dictionary larger than 280 is cut to that many probes for the whole search, and the answers still in the set are always added back. Every guess in the pool is valued when at most 40 answers remain and the pool has at most 20000 rows; above that, deepen a beam of 18 expected-remaining, 6 entropy, and 6 worst-case guesses. Larger sets continue with the top 1 one-ply pick from 40 candidates.
+The page marks those values with ≈. Guesses outside the beam show –.
+No frequency weights. These are not the NYT lists, so openings will not match
+Wordlebot.
+
+Performance: one-ply scoring costs |pool| x |remaining|. If the guess pool is
+larger than "Max guesses to score" it is pre-filtered: possible answers (up to
+half the budget) plus the guesses with the best letter / position coverage of
+the remaining answers. Default 12,000 means the 5-letter pack's one-ply pass is
+exhaustive. That same cap limits which openers the steps beam can deepen.
 
 Pack model
 ----------

@@ -101,7 +101,7 @@ History is `{ guess: Word, clue }[]`.
 - **theoretical** — the theoretical pool still consistent with history. For English this is the whole dictionary, so it is a superset of the known answers.
 - **preferred** — score the known layer while any known answer remains; otherwise score the theoretical layer.
 
-Scenario shows both counts (and both lists). Analysis partitions whichever layer is selected and ranks guesses by expected remaining, entropy, worst case, or number of patterns. The all-green bucket counts as zero left.
+Scenario shows both counts (and both lists). Analysis partitions whichever layer is selected and ranks guesses by expected steps, expected remaining, entropy, worst case, or number of patterns. The all-green bucket counts as zero left. Expected steps is uniform over the remaining answers (no frequency prior) and replays the active guess mode and hard-mode rules on later guesses. Exact through 5 answers (at most 64 guesses tried at one of those nodes). A dictionary larger than 280 is cut to that many probes for the whole search, and the answers still in the set are always added back. Every guess in the pool is valued when at most 40 answers remain and the pool has at most 20000 rows; above that, deepen a beam of 18 expected-remaining, 6 entropy, and 6 worst-case guesses. Larger sets continue with the top 1 one-ply pick from 40 candidates.
 
 ## Renderers
 
