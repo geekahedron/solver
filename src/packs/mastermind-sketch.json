@@ -1,0 +1,19 @@
+{
+  "id": "mastermind-4",
+  "name": "Mastermind sketch (4 pegs, 6 colors)",
+  "status": "sketch",
+  "note": "Not selectable. Whole-clue black/white feedback is not implemented; this file only reserves the pack shape.",
+  "length": 4,
+  "alphabet": ["1", "2", "3", "4", "5", "6"],
+  "delimiter": "none",
+  "caseInsensitive": false,
+  "clueShape": "whole",
+  "clueAlphabet": [
+    { "id": "black", "label": "B" },
+    { "id": "white", "label": "W" }
+  ],
+  "tokenRenderer": "tiles/letters",
+  "clueRenderer": "clues/mastermind-pips",
+  "pools": { "theoretical": "alphabet" },
+  "rules": null
+}

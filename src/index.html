@@ -12,6 +12,12 @@
   <a class="brand" href="../../">Geekahedron</a>
   <h1>Wordle-style Solver</h1>
   <p class="sub">Any word list, any length. Enter your clues, pick how to score, and see what each next guess would leave.</p>
+  <div class="page-modes" id="pageModes">
+    <span class="muted small">Page</span>
+    <button type="button" class="ghost on" data-page="both">Both</button>
+    <button type="button" class="ghost" data-page="scenario">Scenario</button>
+    <button type="button" class="ghost" data-page="analysis">Analysis</button>
+  </div>
 </header>
 
 <main>
@@ -60,6 +66,7 @@
       <button type="button" id="applyBtn">Apply setup</button>
       <span id="packMsg" class="muted"></span>
     </div>
+    <p class="muted small">Built-in English presets are one pack (<code>packs/wordle-en.json</code>): a known answer list, a larger guess list, and Wordle feedback. Guess mode and the solution layer sit on that same pack.</p>
   </details>
 
   <!-- CLUES -->
@@ -76,12 +83,15 @@
     <div class="row-btns"><button type="button" id="undoBtn" class="ghost">Undo last</button><button type="button" id="clearBtn" class="ghost">Clear all</button></div>
   </section>
 
-  <!-- REMAINING -->
-  <section class="card">
+  <!-- REMAINING (scenario) -->
+  <section class="card" id="scenarioCard">
     <h2>Remaining answers: <span id="remCount" class="big">–</span></h2>
-    <details id="remDetails"><summary>Show list</summary><div id="remList" class="wordlist"></div></details>
+    <p class="muted small" id="remLayers"></p>
+    <details id="remDetails"><summary>Show known list</summary><div id="remList" class="wordlist"></div></details>
+    <details id="remTheo"><summary>Show theoretical list</summary><div id="remTheoList" class="wordlist"></div></details>
   </section>
 
+  <div id="analysis">
   <!-- SUGGESTIONS -->
   <section class="card">
     <h2>Suggested next guesses</h2>
@@ -92,6 +102,21 @@
           <option value="entropy">Most information (entropy, bits)</option>
           <option value="minimax">Smallest worst case (guaranteed / minimax)</option>
           <option value="splits">Most distinct patterns (splits)</option>
+        </select>
+      </label>
+      <label>Guess mode
+        <select id="cfgGuessMode">
+          <option value="dictionary" selected>Dictionary (valid guesses)</option>
+          <option value="any">Any (length and alphabet)</option>
+          <option value="hard">Hard (must fit every clue)</option>
+          <option value="answersOnly">Answers still possible</option>
+        </select>
+      </label>
+      <label>Solution layer
+        <select id="cfgLayer">
+          <option value="known" selected>Known answers</option>
+          <option value="theoretical">Theoretical solutions</option>
+          <option value="preferred">Known preferred</option>
         </select>
       </label>
       <label>Hard mode
@@ -120,7 +145,7 @@
         <tbody></tbody>
       </table>
     </div>
-    <p class="muted small">Tap a row to see its full breakdown below.</p>
+    <p class="muted small">Tap a row to see its full breakdown below. Guess mode is any, dictionary, hard, or answers-only. Wordle hard (the menu above) only forces reused greens and yellows. The solution layer chooses which remaining list the scorer partitions.</p>
   </section>
 
   <!-- BREAKDOWN -->
@@ -134,12 +159,16 @@
     <div id="bdSummary" class="muted small"></div>
     <div id="bdRows"></div>
   </section>
+  </div>
 </main>
 
 <footer class="foot">
   <p>Runs entirely in your browser — nothing is uploaded. Built-in English packs: ENABLE word list (public domain); answer subsets chosen by word frequency. See <a href="README.txt">README</a>.</p>
 </footer>
 <script src="core.js"></script>
+<script src="pack.js"></script>
+<script src="engine.js"></script>
+<script src="renderers.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -84,4 +84,5 @@
   };
 
   root.SolverCore = Core;
+  if (typeof module !== 'undefined' && module.exports) module.exports = Core;
 })(typeof self !== 'undefined' ? self : this);
