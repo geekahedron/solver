@@ -20,7 +20,8 @@
 
   var cfg = { L: 5, alpha: 'abcdefghijklmnopqrstuvwxyz', ci: true, tok: false, rule: 'wordle', valid: 'both',
     mode: 'avg', hard: 'off', ansOnly: false, max: 12000, top: 15, notation: 'GYB',
-    layer: 'known', guessMode: 'dictionary', page: 'both' };
+    layer: 'known', guessMode: 'dictionary', page: 'both',
+    guarantee: false, steps: 6, stepsTouched: false };
   var packId = 'en5';
   var engine = null;
   var manifestP = null;
@@ -122,15 +123,30 @@
     if (!s || s.steps == null || s.steps !== s.steps || !isFinite(s.steps)) return '–';
     return fmt(s.steps, 2) + (s.approx ? '≈' : '');
   }
+  function maxStepsCell(s) {
+    var text = '–', loose = false, bad = false;
+    if (s.maxExact && s.maxSteps != null) text = String(s.maxSteps);
+    else if (s.maxSteps != null) { text = '≤' + s.maxSteps; loose = true; }
+    else if (s.maxUncertain) {
+      text = (s.maxLower > 1 && isFinite(s.maxLower)) ? ('≥' + s.maxLower + '?') : '?';
+      loose = true;
+    } else if (s.maxExceeds && s.maxLower != null && isFinite(s.maxLower)) {
+      text = '≥' + s.maxLower;
+    }
+    if (s.maxSteps != null && s.maxSteps > cfg.steps) bad = true;
+    if ((s.maxExact || s.maxExceeds) && s.maxLower > cfg.steps) bad = true;
+    var cls = bad ? ' class="warn"' : (loose ? ' class="depth-loose"' : '');
+    return '<td' + cls + '>' + text + '</td>';
+  }
   function renderSuggestions(top) {
     lastTop = top;
     var tb = $('sugTable').tBodies[0];
     tb.innerHTML = top.map(function (s, i) {
       var k = engine.keys[s.idx];
       return '<tr data-key="' + esc(k) + '"' + (k === selectedKey ? ' class="sel"' : '') + '><td>' + (i + 1) + '</td><td>' + esc(k) + '</td><td>' + stepsText(s) + '</td><td>' + fmt(s.exp, 2) +
-        '</td><td>' + s.worst + '</td><td>' + s.splits + '</td><td>' + fmt(s.ent, 2) + '</td><td>' + (s.cand ? '<span class="ok">✓</span>' : '') + '</td></tr>';
+        '</td><td>' + s.worst + '</td>' + maxStepsCell(s) + '<td>' + s.splits + '</td><td>' + fmt(s.ent, 2) + '</td><td>' + (s.cand ? '<span class="ok">✓</span>' : '') + '</td></tr>';
     }).join('');
-    var col = { steps: 2, avg: 3, minimax: 4, splits: 5, entropy: 6 }[cfg.mode];
+    var col = { steps: 2, avg: 3, minimax: 4, splits: 6, entropy: 7 }[cfg.mode];
     Array.prototype.forEach.call($('sugTable').tHead.rows[0].cells, function (th, i) { th.classList.toggle('sortcol', i === col); });
   }
   $('sugTable').tBodies[0].addEventListener('click', function (e) {
@@ -165,8 +181,12 @@
     var scoredRow = null;
     for (var si = 0; si < lastTop.length; si++) if (engine.keys[lastTop[si].idx] === g.key) scoredRow = lastTop[si];
     var stepsBit = (scoredRow && stepsText(scoredRow) !== '–') ? (' · <b>' + stepsText(scoredRow) + '</b> expected guesses to solve') : '';
+    var maxBit = '';
+    if (scoredRow && scoredRow.maxExact && scoredRow.maxSteps != null) maxBit = ' · max steps ' + scoredRow.maxSteps;
+    else if (scoredRow && scoredRow.maxSteps != null) maxBit = ' · max steps ≤' + scoredRow.maxSteps;
+    else if (scoredRow && scoredRow.maxUncertain) maxBit = ' · max steps ?';
     $('bdSummary').innerHTML = n ? ('If you guess <b>' + esc(g.key.toUpperCase()) + '</b> with ' + n + ' answers possible: ' + rows.length + ' possible results · expected ' + fmt(n ? sumSq / n : 0, 2) +
-      ' left · worst case ' + worst + ' · ' + fmt(ent, 2) + ' bits' + stepsBit + (buckets.has(allGreen) ? ' · <span class="ok">could be the answer</span>' : '') +
+      ' left · largest group ' + worst + ' · ' + fmt(ent, 2) + ' bits' + stepsBit + maxBit + (buckets.has(allGreen) ? ' · <span class="ok">could be the answer</span>' : '') +
       (hardBreak ? ' · <span class="warn">breaks hard mode</span>' : '') +
       (note ? ' · <span class="warn">' + esc(note) + '</span>' : '')) : 'No answers remain — check your clues.';
     var html = rows.map(function (r) {
@@ -262,13 +282,40 @@
     var isCand = new Uint8Array(engine.nWords);
     remaining.forEach(function (i) { if (i < isCand.length) isCand[i] = 1; });
     var id = ++reqId;
-    var msg = { id: id, U: engine.U, L: cfg.L, K: engine.syms.length, rule: engine.feedbackRule, rem: Int32Array.from(remaining), pool: Int32Array.from(bp.pool), isCand: isCand, mode: cfg.mode, topN: cfg.top };
-    if (cfg.mode === 'steps') msg.steps = stepsPayload();
+    var stepInfo = stepsPayload();
+    var msg = {
+      id: id, U: engine.U, L: cfg.L, K: engine.syms.length, rule: engine.feedbackRule,
+      rem: Int32Array.from(remaining), pool: Int32Array.from(bp.pool), isCand: isCand,
+      mode: cfg.mode, topN: cfg.top,
+      guessIdx: stepInfo.dict || Int32Array.from(engine.guessIdx),
+      dict: stepInfo.dict, clues: stepInfo.clues, hard: cfg.hard, guessMode: cfg.guessMode,
+      budget: cfg.steps, guarantee: !!cfg.guarantee,
+      // Short clock so a long Max steps search fails closed instead of freezing.
+      // Expected-steps uses its own limits and is not cut by this clock.
+      timeCapMs: 180, beam: 12, nodeCap: 4000, exactLimit: 16, autoDepthLimit: 20,
+      checkLimit: 40, checkLimitLarge: 16
+    };
+    if (cfg.mode === 'steps') msg.steps = stepInfo;
     var label = 'Scoring ' + bp.pool.length.toLocaleString() + ' guesses × ' + remaining.length.toLocaleString() + ' ' + layerLabel() +
       (bp.pruned ? ' (pre-filtered from ' + bp.total.toLocaleString() + ' by letter coverage — raise “Max guesses to score” for a full search)' : '') +
-      (cfg.mode === 'steps' ? ' · expected steps' : '');
+      (cfg.mode === 'steps' ? ' · expected steps' : '') +
+      (cfg.guarantee ? (' · guarantee ≤ ' + cfg.steps + ' steps') : '');
     $('scoreStatus').innerHTML = esc(label) + '…<div class="bar"><i id="pbar"></i></div>';
-    var done = function (top, ms) {
+    function depthNote(depth) {
+      if (!depth || !depth.on) {
+        if (depth && !depth.computed && remaining.length > 20) return ' Max steps is filled once 20 or fewer answers remain, or when the guarantee is on.';
+        return '';
+      }
+      var note = ' Checked ' + depth.checked + ' by the current ranking: kept ' + depth.kept;
+      if (depth.exceeded) note += ', ' + depth.exceeded + ' proved over ' + cfg.steps;
+      if (depth.uncertain) note += ', ' + depth.uncertain + ' unproved';
+      note += '.';
+      if (depth.approx) note += ' Max steps search was approximate and fail-closed: a guess is kept only when a line was proved.';
+      if (depth.limited) note += ' Stopped before the whole list; a later guess was not checked.';
+      if (!depth.kept) note += ' Nothing proved a finish within n under these rules.';
+      return note;
+    }
+    var done = function (top, ms, depth) {
       if (id !== reqId) return;
       renderSuggestions(top);
       var tail = '';
@@ -282,7 +329,7 @@
         else if (approxN) tail = ' Steps marked ≈ are approximate.';
         else if (exactN) tail = ' Steps are exact for this set.';
       }
-      $('scoreStatus').textContent = label.replace('Scoring', 'Scored') + ' in ' + ms + ' ms.' + tail;
+      $('scoreStatus').textContent = label.replace('Scoring', 'Scored') + ' in ' + ms + ' ms.' + tail + depthNote(depth);
       if ((autoSel || !selectedKey) && top.length) { $('bdGuess').value = engine.keys[top[0].idx]; analyze(engine.keys[top[0].idx], false); }
       else if (selectedKey) analyze(selectedKey, false);
     };
@@ -296,11 +343,19 @@
           var b = $('pbar');
           if (b) {
             var frac = d.done / Math.max(1, d.total);
-            var pct = d.phase === 'steps' ? 70 + 30 * frac : (cfg.mode === 'steps' ? 70 : 100) * frac;
+            var stepsOn = cfg.mode === 'steps';
+            var guar = !!cfg.guarantee;
+            var pct;
+            if (!stepsOn && !guar) pct = 100 * frac;
+            else if (stepsOn && !guar) pct = d.phase === 'steps' ? 70 + 30 * frac : 70 * frac;
+            else if (!stepsOn && guar) pct = d.phase === 'depth' ? 70 + 30 * frac : 70 * frac;
+            else if (d.phase === 'depth') pct = 70 + 30 * frac;
+            else if (d.phase === 'steps') pct = 40 + 30 * frac;
+            else pct = 40 * frac;
             b.style.width = pct + '%';
           }
         }
-        else { done(d.top, d.ms); worker.terminate(); worker = null; }
+        else { done(d.top, d.ms, d.depth); worker.terminate(); worker = null; }
       };
       worker.onerror = function () { worker = null; syncScore(); };
       worker.postMessage(msg);
@@ -314,8 +369,10 @@
           Core.attachExpectedSteps(sc, msg.U, msg.L, msg.K, msg.rule, msg.rem, msg.pool, {
             guessMode: st.guessMode, hard: st.hard, dict: st.dict, clues: st.clues || []
           });
+          msg.stepsAttached = true;
         }
-        done(Core.rank(sc, msg.mode, msg.topN), Date.now() - t0);
+        var finished = Core.finishScores(sc, msg);
+        done(finished.top, Date.now() - t0, finished.depth);
       }, 10);
     }
   }
@@ -326,6 +383,10 @@
     remKnown = parts.known;
     remTheo = parts.theoretical;
     remaining = engine.activeRemaining(cfg.layer, parts);
+    if (!cfg.stepsTouched) {
+      cfg.steps = Math.max(1, 6 - clues.length);
+      if ($('cfgSteps')) $('cfgSteps').value = cfg.steps;
+    }
     renderClues(); renderRemaining(); renderPreview();
     selectedKey = null; autoSel = true;
     $('bdRows').innerHTML = ''; $('bdSummary').textContent = ''; $('bdTitle').textContent = '';
@@ -351,6 +412,7 @@
     $('cfgL').value = cfg.L; $('cfgAlpha').value = cfg.alpha; $('cfgCI').checked = cfg.ci; $('cfgTok').checked = cfg.tok;
     $('cfgRule').value = cfg.rule; $('cfgValid').value = cfg.valid; $('cfgMode').value = cfg.mode; $('cfgHard').value = cfg.hard;
     $('cfgAnsOnly').checked = cfg.ansOnly; $('cfgMax').value = cfg.max; $('cfgTop').value = cfg.top; $('cfgNotation').value = cfg.notation;
+    $('cfgGuarantee').checked = !!cfg.guarantee; $('cfgSteps').value = cfg.steps || 6;
     $('cfgLayer').value = cfg.layer || 'known';
     $('cfgGuessMode').value = cfg.guessMode || inferGuessMode();
     applyPage(cfg.page || 'both', true);
@@ -476,6 +538,14 @@
   $('cfgAnsOnly').addEventListener('change', function () { cfg.ansOnly = this.checked; syncGuessModeLabel(); scheduleScore(); saveState(); });
   $('cfgMax').addEventListener('change', function () { cfg.max = Math.max(10, parseInt(this.value, 10) || 12000); scheduleScore(); saveState(); });
   $('cfgTop').addEventListener('change', function () { cfg.top = Math.max(1, Math.min(500, parseInt(this.value, 10) || 15)); scheduleScore(); saveState(); });
+  $('cfgGuarantee').addEventListener('change', function () { cfg.guarantee = this.checked; scheduleScore(); saveState(); });
+  $('cfgSteps').addEventListener('change', function () {
+    cfg.stepsTouched = true;
+    cfg.steps = Math.max(1, Math.min(30, parseInt(this.value, 10) || 1));
+    this.value = cfg.steps;
+    scheduleScore();
+    saveState();
+  });
   $('cfgValid').addEventListener('change', function () {
     cfg.valid = this.value; syncGuessModeLabel();
     clues.forEach(function (c) { c.note = validityNote(c.key); });
@@ -523,7 +593,7 @@
   function init() {
     var st = null; try { st = JSON.parse(localStorage.getItem(LS_STATE) || 'null'); } catch (e) {}
     if (st && st.cfg) {
-      ['mode', 'hard', 'ansOnly', 'max', 'top', 'notation', 'valid', 'layer', 'guessMode', 'page'].forEach(function (k) {
+      ['mode', 'hard', 'ansOnly', 'max', 'top', 'notation', 'valid', 'layer', 'guessMode', 'page', 'guarantee', 'steps', 'stepsTouched'].forEach(function (k) {
         if (st.cfg[k] !== undefined) cfg[k] = st.cfg[k];
       });
       if (!st.cfg.guessMode) cfg.guessMode = inferGuessMode();

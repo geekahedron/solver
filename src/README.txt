@@ -30,8 +30,11 @@ by the feedback pattern they would produce. Reported metrics:
   Bits       = Shannon entropy of the bucket distribution
   Steps      = expected guesses until the secret is found (this guess counts as 1;
                all-green adds 0; each remaining answer is equally likely)
+  Worst      = largest one-ply pattern group. It is not Max steps.
+  Max steps  = worst-case further guesses to finish every remaining answer,
+               including the guess being scored
 Modes: fewest expected steps to solve, fewest expected remaining (average case),
-most information (entropy), smallest worst case (minimax / "guaranteed"), most
+most information (entropy), smallest worst case (minimax, one ply), most
 patterns (splits). Ties prefer guesses that could still be the answer.
 
 Steps follows the active guess mode and hard-mode rules on later plies. Sets of
@@ -41,11 +44,33 @@ The page marks those values with ≈. Guesses outside the beam show –.
 No frequency weights. These are not the NYT lists, so openings will not match
 Wordlebot.
 
+Guarantee (Analysis checkbox)
+-----------------------------
+Max steps is the worst-case number of further guesses needed to finish every
+remaining answer, including the guess being scored. Answers are weighted
+uniformly. Every later guess uses the active guess mode and hard-mode rules
+(Wordle hard or strict), the same continuation rules as expected steps. Guess
+mode "any" does not invent strings outside the loaded lists.
+
+When the box is checked, the selected scoring mode — including fewest expected
+steps — ranks only guesses for which a line with Max steps ≤ n is proved.
+Survivors stay in that mode's order. n defaults to 6 minus clues already entered
+(a Wordle budget) until you edit it.
+
+The Max steps search is exact while 16 or fewer answers remain (or the legal
+guess list fits in its beam). On longer lists it tries a letter-coverage beam,
+a node cap, and a short time cap. That pass is fail-closed: a missing line
+refuses the guess and never reports a guarantee that was not proved. A proved
+but possibly non-optimal line is shown as ≤k. "≥k?" means the search could not
+prove a number. Guessing a still-possible answer until it hits is a real
+strategy, so Max steps ≤ (answers left) can be proved even when the beam is empty.
+
 Performance: one-ply scoring costs |pool| x |remaining|. If the guess pool is
 larger than "Max guesses to score" it is pre-filtered: possible answers (up to
 half the budget) plus the guesses with the best letter / position coverage of
 the remaining answers. Default 12,000 means the 5-letter pack's one-ply pass is
 exhaustive. That same cap limits which openers the steps beam can deepen.
+The Max steps search is capped separately.
 
 Pack model
 ----------
