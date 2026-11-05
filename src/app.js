@@ -5,6 +5,8 @@
   var Core = window.SolverCore;
   var Pack = window.SolverPack;
   var Renderers = window.SolverRenderers;
+  var TreeStatus = window.SolverTreeStatus;
+  if (!TreeStatus) throw new Error('tree-status.js failed to load');
   var LS_KEY = 'geek-solver-packs-v1', LS_STATE = 'geek-solver-state-v1';
 
   var BUILTIN = [
@@ -24,6 +26,9 @@
     guarantee: false, steps: 6, stepsTouched: false, treePolicy: 'worst' };
   var packId = 'en5';
   var engine = null;
+  var packPhase = 'idle';
+  var packError = '';
+  var packGen = 0;
   var manifestP = null;
   var clues = [];
   var remaining = [];
@@ -32,6 +37,7 @@
   var lastTop = [], selectedKey = null, autoSel = true, bdFilterPat = null;
   var worker = null, reqId = 0, scoreTimer = null;
   var treeWorker = null, treeReq = 0, treeResult = null, treeSig = '', treePath = [], treeOnlyOver = false, treeListOpen = false;
+  var treeQueue = null, treeFlushToken = 0;
   var TREE_OPENERS = ['slate', 'tarps', 'crane', 'cramp', 'trace', 'stare', 'crate', 'raise', 'alert', 'later'];
 
   function inferGuessMode() {
@@ -444,15 +450,28 @@
     }).filter(Boolean);
     $('bdGuess').value = ''; selectedKey = null;
     refresh();
+    packPhase = 'ready';
+    packError = '';
+    scheduleTreeFlush();
   }
   function mountCustom(keepClues) {
-    readCfgFromUI();
-    var pack = Pack.fromCustom({
-      length: cfg.L, alphabet: cfg.alpha, caseInsensitive: cfg.ci, tokens: cfg.tok, rule: cfg.rule, name: 'Custom'
-    });
-    engine = window.SolverEngine.create(pack, { answers: $('ansText').value, guesses: $('guessText').value });
-    engine.feedbackRule = cfg.rule === 'simple' ? 'simple' : 'wordle';
-    reportPack(keepClues);
+    packGen++;
+    treeFlushToken++;
+    try {
+      readCfgFromUI();
+      var pack = Pack.fromCustom({
+        length: cfg.L, alphabet: cfg.alpha, caseInsensitive: cfg.ci, tokens: cfg.tok, rule: cfg.rule, name: 'Custom'
+      });
+      engine = window.SolverEngine.create(pack, { answers: $('ansText').value, guesses: $('guessText').value });
+      engine.feedbackRule = cfg.rule === 'simple' ? 'simple' : 'wordle';
+      reportPack(keepClues);
+    } catch (err) {
+      packPhase = 'failed';
+      packError = TreeStatus.errorText(err);
+      $('packMsg').textContent = 'Could not build this pack (' + packError + ').';
+      failQueuedPack();
+      throw err;
+    }
   }
   function englishManifest() {
     if (!manifestP) {
@@ -464,9 +483,19 @@
     return manifestP;
   }
   function loadPack(id, keepClues) {
+    var gen = ++packGen;
+    treeFlushToken++;
+    packPhase = 'loading';
     packId = id;
+    function current() { return gen === packGen; }
     if (id.indexOf('saved:') === 0) {
-      var p = savedPacks()[id.slice(6)]; if (!p) return Promise.resolve();
+      var p = savedPacks()[id.slice(6)];
+      if (!p) {
+        packPhase = 'failed';
+        packError = 'Saved pack is missing';
+        failQueuedPack();
+        return Promise.resolve();
+      }
       Object.assign(cfg, p.cfg || {});
       cfg.guessMode = inferGuessMode();
       writeCfgToUI();
@@ -482,6 +511,7 @@
     }
     $('packMsg').textContent = 'Loading…';
     return englishManifest().then(function (manifest) {
+      if (!current()) return;
       var variant = null;
       (manifest.variants || []).forEach(function (v) { if (v.id === b.variant) variant = v; });
       if (!variant) throw new Error('missing variant ' + b.variant);
@@ -494,6 +524,7 @@
         fetchPack(variant.guessList),
         Pack.loadRules(pack, fetchPack)
       ]).then(function (t) {
+        if (!current()) return;
         cfg.L = pack.length; cfg.tok = false; cfg.ci = pack.caseInsensitive;
         cfg.alpha = typeof manifest.alphabet === 'string' ? manifest.alphabet : cfg.alpha;
         cfg.rule = pack.feedback === 'simple' ? 'simple' : 'wordle';
@@ -504,8 +535,12 @@
         reportPack(keepClues);
       });
     }).catch(function (e) {
-      $('packMsg').textContent = 'Could not load built-in pack (' + e.message + '). Paste or upload lists instead.';
+      if (!current()) return;
+      packPhase = 'failed';
+      packError = (e && e.message) ? e.message : String(e || 'load failed');
+      $('packMsg').textContent = 'Could not load built-in pack (' + packError + '). Paste or upload lists instead.';
       $('setupCard').open = true;
+      failQueuedPack();
     });
   }
   $('packSel').addEventListener('change', function () { loadPack($('packSel').value, false); });
@@ -670,7 +705,7 @@
     renderTree();
     var stale = $('treeStale');
     if (stale) stale.hidden = true;
-    if ($('treeStatus')) $('treeStatus').textContent = 'Choose a starting word and build its tree.';
+    if ($('treeStatus') && !treeQueue) $('treeStatus').textContent = 'Choose a starting word and build its tree.';
   }
   function treeNode() {
     var node = treeResult && treeResult.root;
@@ -854,41 +889,99 @@
     list += '<div class="tree-answers">' + listHtml + '</div></details>';
     walkEl.innerHTML = crumbs + head + rows + list;
   }
+  function treeOpenerValue() {
+    return ($('treeOpener') && $('treeOpener').value || '').trim();
+  }
+  function setTreeWarn(msg) {
+    var el = $('treeStatus');
+    if (!el) return;
+    el.innerHTML = '<span class="warn">' + esc(msg) + '</span>';
+  }
+  function rememberTreeQueue() {
+    treeQueue = { opener: treeOpenerValue(), userEdited: false };
+  }
+  function failQueuedPack() {
+    if (!treeQueue) return;
+    treeQueue = null;
+    var blocked = TreeStatus.blockReason({ hasEngine: false, packPhase: 'failed', packError: packError });
+    setTreeWarn(blocked.message);
+  }
+  // Pack readiness can land in the same turn that restores saved clues. Build on the next turn.
+  function scheduleTreeFlush() {
+    if (!treeQueue || !engine || packPhase !== 'ready') return;
+    var token = ++treeFlushToken;
+    var gen = packGen;
+    setTimeout(function () {
+      if (token !== treeFlushToken || gen !== packGen) return;
+      flushTreeQueue();
+    }, 0);
+  }
+  function flushTreeQueue() {
+    if (!treeQueue || !engine || packPhase !== 'ready') return;
+    if (!TreeStatus.queueStillCurrent(treeQueue, treeOpenerValue())) {
+      treeQueue = null;
+      setTreeWarn(TreeStatus.openerChanged);
+      return;
+    }
+    treeQueue = null;
+    runTree();
+  }
   function runTree() {
-    if (!engine) return;
-    var raw = ($('treeOpener').value || '').trim();
-    var enc = engine.encode(raw);
-    if (!raw || enc.err) {
-      $('treeStatus').innerHTML = '<span class="warn">' + esc(enc && enc.err ? enc.err : 'Type a starting guess.') + '</span>';
+    var raw = treeOpenerValue();
+    var enc = null;
+    var packReady = !!engine && packPhase !== 'loading';
+    if (packReady) {
+      try { enc = engine.encode(raw); }
+      catch (err) {
+        treeQueue = null;
+        setTreeWarn(TreeStatus.errorText(err));
+        return;
+      }
+    }
+    var blocked = TreeStatus.blockReason({
+      hasEngine: packReady,
+      packPhase: packPhase,
+      packError: packError,
+      raw: raw,
+      encodeErr: enc && enc.err,
+      remaining: remaining.length
+    });
+    if (blocked) {
+      if (blocked.queue) rememberTreeQueue();
+      else treeQueue = null;
+      setTreeWarn(blocked.message);
       return;
     }
-    if (!remaining.length) {
-      $('treeStatus').innerHTML = '<span class="warn">No answers left to build a tree on.</span>';
+    treeQueue = null;
+    var n, id, sig, idx, msg;
+    try {
+      n = parseInt($('treeBudget').value, 10);
+      if (n) {
+        cfg.steps = Math.max(1, Math.min(30, n));
+        $('treeBudget').value = cfg.steps;
+        if ($('cfgSteps')) $('cfgSteps').value = cfg.steps;
+      }
+      cfg.treePolicy = $('treePolicy').value || 'worst';
+      id = ++treeReq;
+      sig = currentTreeSig();
+      idx = engine.keyIdx.has(enc.key) ? engine.keyIdx.get(enc.key) : -1;
+      msg = {
+        type: 'tree', id: id,
+        U: engine.U, L: cfg.L, K: engine.syms.length, rule: engine.feedbackRule,
+        rem: Int32Array.from(remaining),
+        guessIdx: Int32Array.from(treeGuessIdx()),
+        clues: clues.map(function (c) {
+          return { ids: Array.prototype.slice.call(c.ids), pat: c.pat, digits: c.digits.slice() };
+        }),
+        hard: cfg.hard, guessMode: cfg.guessMode,
+        opener: idx, openerIds: Array.prototype.slice.call(enc.ids),
+        budget: cfg.steps, policy: cfg.treePolicy,
+        limits: { timeCapMs: 12000 }
+      };
+    } catch (err) {
+      setTreeWarn(TreeStatus.errorText(err));
       return;
     }
-    var n = parseInt($('treeBudget').value, 10);
-    if (n) {
-      cfg.steps = Math.max(1, Math.min(30, n));
-      $('treeBudget').value = cfg.steps;
-      if ($('cfgSteps')) $('cfgSteps').value = cfg.steps;
-    }
-    cfg.treePolicy = $('treePolicy').value || 'worst';
-    var id = ++treeReq;
-    var sig = currentTreeSig();
-    var idx = engine.keyIdx.has(enc.key) ? engine.keyIdx.get(enc.key) : -1;
-    var msg = {
-      type: 'tree', id: id,
-      U: engine.U, L: cfg.L, K: engine.syms.length, rule: engine.feedbackRule,
-      rem: Int32Array.from(remaining),
-      guessIdx: Int32Array.from(treeGuessIdx()),
-      clues: clues.map(function (c) {
-        return { ids: Array.prototype.slice.call(c.ids), pat: c.pat, digits: c.digits.slice() };
-      }),
-      hard: cfg.hard, guessMode: cfg.guessMode,
-      opener: idx, openerIds: Array.prototype.slice.call(enc.ids),
-      budget: cfg.steps, policy: cfg.treePolicy,
-      limits: { timeCapMs: 12000 }
-    };
     function show(tree, ms) {
       if (id !== treeReq) return;
       treeResult = tree;
@@ -903,42 +996,88 @@
       markTreeStale();
       saveState();
     }
+    function failTree(err) {
+      if (id !== treeReq) return;
+      if (treeWorker) {
+        treeWorker.onmessage = null;
+        treeWorker.onerror = null;
+        treeWorker.terminate();
+        treeWorker = null;
+      }
+      setTreeWarn(TreeStatus.errorText(err));
+    }
     $('treeStatus').innerHTML = 'Building tree for <b>' + esc(enc.key.toUpperCase()) + '</b>…<div class="bar"><i id="treeBar"></i></div>';
     if (treeWorker) { treeWorker.terminate(); treeWorker = null; }
+    var fellBack = false;
+    var workerErr = '';
+    function syncTree(fromWorker) {
+      if (fromWorker) workerErr = TreeStatus.errorText(fromWorker, 'Worker failed.');
+      if (fellBack || id !== treeReq) return;
+      fellBack = true;
+      if (treeWorker) {
+        treeWorker.onmessage = null;
+        treeWorker.onerror = null;
+        treeWorker.terminate();
+        treeWorker = null;
+      }
+      setTimeout(function () {
+        if (id !== treeReq) return;
+        try {
+          var t0 = Date.now();
+          var tree = Core.buildOpenerTree(msg, function (done, total) {
+            if (id !== treeReq) return;
+            var bar = $('treeBar');
+            if (bar) bar.style.width = (100 * done / Math.max(1, total)) + '%';
+          });
+          show(tree, Date.now() - t0);
+        } catch (err) {
+          failTree(TreeStatus.errorText(err, '') || workerErr || 'Tree build failed.');
+        }
+      }, 10);
+    }
     try {
       if (location.protocol === 'file:') throw new Error('no worker on file://');
       treeWorker = new Worker('worker.js');
       treeWorker.onmessage = function (e) {
         var d = e.data;
         if (!d || d.id !== id || d.id !== treeReq) return;
-        if (d.type === 'progress') {
-          var bar = $('treeBar');
-          if (bar) bar.style.width = (100 * d.done / Math.max(1, d.total)) + '%';
-          return;
-        }
-        if (d.type === 'tree') {
-          show(d.tree, d.ms);
-          if (treeWorker) { treeWorker.terminate(); treeWorker = null; }
+        try {
+          if (d.type === 'progress') {
+            var bar = $('treeBar');
+            if (bar) bar.style.width = (100 * d.done / Math.max(1, d.total)) + '%';
+            return;
+          }
+          if (d.type === 'error') {
+            syncTree(d.message || 'Worker failed.');
+            return;
+          }
+          if (d.type === 'tree') {
+            show(d.tree, d.ms);
+            if (treeWorker) {
+              treeWorker.onmessage = null;
+              treeWorker.onerror = null;
+              treeWorker.terminate();
+              treeWorker = null;
+            }
+          }
+        } catch (err) {
+          failTree(err);
         }
       };
-      treeWorker.onerror = function () { treeWorker = null; syncTree(); };
+      treeWorker.onerror = function (ev) {
+        syncTree((ev && ev.message) || 'Worker failed.');
+        if (ev && ev.preventDefault) ev.preventDefault();
+      };
       treeWorker.postMessage(msg);
-    } catch (err) { syncTree(); }
-    function syncTree() {
-      setTimeout(function () {
-        var t0 = Date.now();
-        var tree = Core.buildOpenerTree(msg, function (done, total) {
-          if (id !== treeReq) return;
-          var bar = $('treeBar');
-          if (bar) bar.style.width = (100 * done / Math.max(1, total)) + '%';
-        });
-        show(tree, Date.now() - t0);
-      }, 10);
-    }
+    } catch (err) { syncTree(err); }
   }
   $('treeBuild').addEventListener('click', runTree);
   $('treeOpener').addEventListener('keydown', function (e) { if (e.key === 'Enter') runTree(); });
-  $('treeOpener').addEventListener('input', function () { markTreeStale(); });
+  $('treeOpener').addEventListener('input', function () {
+    markTreeStale();
+    if (!treeQueue) return;
+    treeQueue.userEdited = treeOpenerValue().toLowerCase() !== (treeQueue.opener || '').toLowerCase();
+  });
   $('treePolicy').addEventListener('change', function () {
     cfg.treePolicy = this.value;
     markTreeStale();

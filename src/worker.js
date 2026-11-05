@@ -4,10 +4,18 @@ self.onmessage = function (e) {
   var d = e.data;
   if (d.type === 'tree') {
     var tTree = Date.now();
-    var tree = SolverCore.buildOpenerTree(d, function (done, total, nodes) {
-      self.postMessage({ type: 'progress', id: d.id, done: done, total: total, nodes: nodes, phase: 'tree' });
-    });
-    self.postMessage({ type: 'tree', id: d.id, tree: tree, ms: Date.now() - tTree });
+    try {
+      var tree = SolverCore.buildOpenerTree(d, function (done, total, nodes) {
+        self.postMessage({ type: 'progress', id: d.id, done: done, total: total, nodes: nodes, phase: 'tree' });
+      });
+      self.postMessage({ type: 'tree', id: d.id, tree: tree, ms: Date.now() - tTree });
+    } catch (err) {
+      self.postMessage({
+        type: 'error',
+        id: d.id,
+        message: (err && err.message) ? String(err.message) : 'Tree build failed.'
+      });
+    }
     return;
   }
   var t0 = Date.now();
