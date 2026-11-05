@@ -280,6 +280,322 @@ check('script: rules load through Pack.loadRules', function () {
   });
 });
 
+function mini(len, answers, guesses) {
+  const pack = Pack.fromCustom({
+    length: len,
+    alphabet: 'abcdefghijklmnopqrstuvwxyz',
+    caseInsensitive: true,
+    tokens: false,
+    rule: 'wordle'
+  });
+  return Engine.create(pack, { answers: answers.join('\n'), guesses: guesses.join('\n') });
+}
+
+function dictOf(eng) {
+  const d = new Int32Array(eng.nWords);
+  for (let i = 0; i < eng.nWords; i++) d[i] = i;
+  return d;
+}
+
+function scoreSteps(eng, rem, pool, opts) {
+  const isCand = new Uint8Array(eng.nWords);
+  rem.forEach(function (i) { isCand[i] = 1; });
+  const scores = Core.scorePool(
+    eng.U, eng.pack.length, eng.syms.length, eng.feedbackRule,
+    Int32Array.from(rem), Int32Array.from(pool), isCand
+  );
+  Core.attachExpectedSteps(
+    scores, eng.U, eng.pack.length, eng.syms.length, eng.feedbackRule,
+    Int32Array.from(rem), Int32Array.from(pool), opts || { guessMode: 'dictionary', hard: 'off', clues: [], dict: dictOf(eng) }
+  );
+  const by = {};
+  scores.forEach(function (s) { by[eng.keys[s.idx]] = s; });
+  return by;
+}
+
+function near(actual, expected, label) {
+  assert.ok(Math.abs(actual - expected) < 1e-9, (label || '') + ' ' + actual + ' !~ ' + expected);
+}
+
+check('steps mode sorts by expected steps and leaves unscored rows last', function () {
+  const scores = [
+    { idx: 0, exp: 1, worst: 1, splits: 4, ent: 2, cand: 0, steps: 3 },
+    { idx: 1, exp: 5, worst: 5, splits: 2, ent: 0.2, cand: 1, steps: 2.1 },
+    { idx: 2, exp: 0, worst: 0, splits: 1, ent: 0, cand: 1, steps: null }
+  ];
+  const ranked = Core.rank(scores.map(function (s) { return Object.assign({}, s); }), 'steps', 3);
+  assert.strictEqual(ranked[0].idx, 1);
+  assert.strictEqual(ranked[2].idx, 2);
+});
+
+check('expected steps matches a hand-checked tree', function () {
+  // Length 2. Answers ab, ac, ba. Guess ab:
+  //   ab → GG (solved, contributes 1)
+  //   ac → GB (singleton, +1)
+  //   ba → YY (singleton, +1)
+  //   steps = (1 + 2 + 2) / 3 = 5/3
+  // One-ply expected remaining is (1+1)/3 = 2/3, so the column is not a rename of exp.
+  const triple = mini(2, ['ab', 'ac', 'ba'], ['ab', 'ac', 'ba']);
+  assert.deepStrictEqual(triple.feedbackDigits('ab', 'ac'), [2, 0]);
+  assert.deepStrictEqual(triple.feedbackDigits('ab', 'ba'), [1, 1]);
+  const tripleScores = scoreSteps(triple, triple.knownIdx, triple.guessIdx);
+  near(tripleScores.ab.steps, 5 / 3, 'ab separates three');
+  assert.strictEqual(tripleScores.ab.approx, 0);
+  assert.ok(Math.abs(tripleScores.ab.steps - tripleScores.ab.exp) > 0.2);
+
+  // One secret: guessing it costs 1. Two secrets: guessing either costs 1.5.
+  // zz matches both as BB, so it wastes a guess and then the pair still costs 1.5.
+  const pair = mini(2, ['aa', 'ab'], ['aa', 'ab', 'zz']);
+  const one = mini(2, ['aa'], ['aa', 'zz']);
+  near(scoreSteps(one, one.knownIdx, one.guessIdx).aa.steps, 1, 'solved in 1');
+  near(scoreSteps(one, one.knownIdx, one.guessIdx).zz.steps, 2, 'miss then solve');
+  const pairScores = scoreSteps(pair, pair.knownIdx, pair.guessIdx);
+  near(pairScores.aa.steps, 1.5, 'pair');
+  near(pairScores.zz.steps, 2.5, 'wasted guess');
+
+  // Disjoint answers ab, cd, ef, gh. Bridge ae is not an answer.
+  //   ae → {ab}, {ef}, {cd, gh}
+  //   steps = 1 + (1/4)*1 + (1/4)*1 + (1/2)*1.5 = 2.25
+  //   ab → solved + {cd, ef, gh} lumped. That triple is 2 (no guess separates it),
+  //   so ab scores 1 + (3/4)*2 = 2.5
+  const quad = mini(2, ['ab', 'cd', 'ef', 'gh'], ['ab', 'cd', 'ef', 'gh', 'ae']);
+  assert.deepStrictEqual(quad.feedbackDigits('ae', 'ab'), [2, 0]);
+  assert.deepStrictEqual(quad.feedbackDigits('ae', 'ef'), [0, 1]);
+  assert.deepStrictEqual(quad.feedbackDigits('ae', 'cd'), [0, 0]);
+  assert.deepStrictEqual(quad.feedbackDigits('ab', 'cd'), [0, 0]);
+  assert.deepStrictEqual(quad.feedbackDigits('ab', 'ef'), [0, 0]);
+  const quadScores = scoreSteps(quad, quad.knownIdx, quad.guessIdx);
+  near(quadScores.ae.steps, 2.25, 'bridge');
+  near(quadScores.ab.steps, 2.5, 'answer opener');
+  near(quadScores.cd.steps, 2.5, 'answer opener cd');
+  assert.strictEqual(quadScores.ae.approx, 0);
+  assert.strictEqual(quadScores.ab.approx, 0);
+  const ranked = Core.rank(Object.keys(quadScores).map(function (k) { return quadScores[k]; }), 'steps', 1);
+  assert.strictEqual(quad.keys[ranked[0].idx], 'ae');
+
+  // Same first guess, different next-guess pool.
+  // Answers ab, cd, ef, gh, zz. zz leaves the disjoint quad (all BB).
+  // Dictionary may play ae next (2.25): 1 + (4/5)*(9/4) = 14/5.
+  // Answers only cannot: 1 + (4/5)*(5/2) = 3.
+  const five = mini(2, ['ab', 'cd', 'ef', 'gh', 'zz'], ['ab', 'cd', 'ef', 'gh', 'zz', 'ae']);
+  const rem5 = five.knownIdx.slice();
+  const dictSteps = scoreSteps(five, rem5, five.guessIdx, {
+    guessMode: 'dictionary', hard: 'off', clues: [], dict: dictOf(five)
+  });
+  const ansPool = five.buildPool({
+    guessMode: 'answersOnly', valid: 'both', hard: 'off', ansOnly: true,
+    remaining: rem5, clues: [], max: 50
+  });
+  assert.deepStrictEqual(keys(five, ansPool.pool), ['ab', 'cd', 'ef', 'gh', 'zz']);
+  const ansSteps = scoreSteps(five, rem5, ansPool.pool, {
+    guessMode: 'answersOnly', hard: 'off', clues: [], dict: null
+  });
+  near(dictSteps.zz.steps, 14 / 5, 'zz with bridge continuation');
+  near(ansSteps.zz.steps, 3, 'zz answers-only continuation');
+  assert.strictEqual(dictSteps.zz.approx, 0);
+  assert.strictEqual(ansSteps.zz.approx, 0);
+});
+
+check('wordle hard changes expected steps of the same guess', function () {
+  // Answers ab, ac, ad, ae, af all share a leading a.
+  // Clue ax → GB keeps all five and forces Wordle hard to keep that green.
+  // Guessing af leaves {ab, ac, ad, ae}.
+  //   bc splits that quad 1+1+2 and scores 2.25, but it breaks the green.
+  //   A legal answer leaves a lumped triple (itself 2) and scores 2.5.
+  //   af therefore costs 1+(4/5)*2.25 = 2.8 off hard mode, and 1+(4/5)*2.5 = 3 on it.
+  const eng = mini(2, ['ab', 'ac', 'ad', 'ae', 'af'], ['ab', 'ac', 'ad', 'ae', 'af', 'ax', 'bc']);
+  const clue = eng.makeClue('ax', [2, 0]);
+  const rem = eng.partition([clue]).known.slice();
+  assert.deepStrictEqual(keys(eng, rem), ['ab', 'ac', 'ad', 'ae', 'af']);
+  assert.strictEqual(eng.wordleHardOk(eng.keyIdx.get('bc'), [clue]), false);
+  assert.strictEqual(eng.wordleHardOk(eng.keyIdx.get('af'), [clue]), true);
+  assert.deepStrictEqual(eng.feedbackDigits('bc', 'ab'), [1, 0]);
+  assert.deepStrictEqual(eng.feedbackDigits('bc', 'ac'), [0, 2]);
+  assert.deepStrictEqual(eng.feedbackDigits('bc', 'ad'), [0, 0]);
+  assert.deepStrictEqual(eng.feedbackDigits('af', 'ab'), [2, 0]);
+  const clues = [{ ids: clue.ids, pat: clue.pat, digits: clue.digits }];
+  const off = scoreSteps(eng, rem, eng.guessIdx, {
+    guessMode: 'dictionary', hard: 'off', clues: clues, dict: dictOf(eng)
+  });
+  const on = scoreSteps(eng, rem, eng.guessIdx, {
+    guessMode: 'dictionary', hard: 'wordle', clues: clues, dict: dictOf(eng)
+  });
+  near(off.af.steps, 1 + (4 / 5) * 2.25, 'af off hard');
+  near(on.af.steps, 3, 'af on wordle hard');
+  assert.strictEqual(off.af.approx, 0);
+  assert.strictEqual(on.af.approx, 0);
+  const legal = eng.buildPool({
+    guessMode: 'dictionary', valid: 'both', hard: 'wordle', ansOnly: false,
+    remaining: rem, clues: [clue], max: 50
+  });
+  assert.ok(keys(eng, legal.pool).indexOf('bc') < 0);
+  assert.ok(keys(eng, legal.pool).indexOf('af') >= 0);
+  const strict = eng.buildPool({
+    guessMode: 'hard', valid: 'both', hard: 'strict', ansOnly: false,
+    remaining: rem, clues: [clue], max: 50
+  });
+  assert.ok(keys(eng, strict.pool).indexOf('bc') < 0);
+});
+
+function oracleSteps(eng, answers, guesses) {
+  const U = eng.U;
+  const L = eng.pack.length;
+  const counts = new Int16Array(eng.syms.length + 2);
+  const pow3 = Core.pow3(L);
+  const rule = eng.feedbackRule;
+  let allGreen = 0;
+  for (let i = 0; i < L; i++) allGreen += 2 * pow3[i];
+  const memo = new Map();
+  function fb(g, a) {
+    return Core.feedback(U, g * L, U, a * L, L, rule, counts, pow3);
+  }
+  function E(set) {
+    const sorted = set.slice().sort(function (a, b) { return a - b; });
+    const key = sorted.join(',');
+    if (memo.has(key)) return memo.get(key);
+    if (sorted.length <= 1) { memo.set(key, sorted.length); return sorted.length; }
+    let best = Infinity;
+    for (let gi = 0; gi < guesses.length; gi++) {
+      const g = guesses[gi];
+      const groups = new Map();
+      for (let ai = 0; ai < sorted.length; ai++) {
+        const pat = fb(g, sorted[ai]);
+        if (!groups.has(pat)) groups.set(pat, []);
+        groups.get(pat).push(sorted[ai]);
+      }
+      if (groups.size === 1 && !groups.has(allGreen)) continue;
+      let extra = 0;
+      groups.forEach(function (members, pat) {
+        if (pat === allGreen) return;
+        extra += (members.length / sorted.length) * E(members);
+      });
+      if (1 + extra < best) best = 1 + extra;
+    }
+    memo.set(key, best);
+    return best;
+  }
+  const out = {};
+  const sortedAnswers = answers.slice().sort(function (a, b) { return a - b; });
+  for (let gi = 0; gi < guesses.length; gi++) {
+    const g = guesses[gi];
+    const groups = new Map();
+    for (let ai = 0; ai < sortedAnswers.length; ai++) {
+      const pat = fb(g, sortedAnswers[ai]);
+      if (!groups.has(pat)) groups.set(pat, []);
+      groups.get(pat).push(sortedAnswers[ai]);
+    }
+    if (groups.size === 1 && !groups.has(allGreen)) {
+      out[g] = 1 + E(sortedAnswers);
+      continue;
+    }
+    let extra = 0;
+    groups.forEach(function (members, pat) {
+      if (pat === allGreen) return;
+      extra += (members.length / sortedAnswers.length) * E(members);
+    });
+    out[g] = 1 + extra;
+  }
+  return out;
+}
+
+check('expected steps matches an independent tree on tiny packs', function () {
+  function agree(eng) {
+    const answers = eng.knownIdx.slice();
+    const guesses = [];
+    for (let i = 0; i < eng.nWords; i++) guesses.push(i);
+    const oracle = oracleSteps(eng, answers, guesses);
+    const got = scoreSteps(eng, answers, guesses, {
+      guessMode: 'dictionary', hard: 'off', clues: [], dict: dictOf(eng),
+      limits: { exactSet: 8, exactPool: 500, rankAllMax: 30, contPool: 500, nodeBeam: 8 }
+    });
+    guesses.forEach(function (g) {
+      const key = eng.keys[g];
+      near(got[key].steps, oracle[g], key);
+      assert.strictEqual(got[key].approx, 0);
+    });
+  }
+  agree(mini(2, ['ab', 'cd', 'ef', 'gh'], ['ab', 'cd', 'ef', 'gh', 'ae']));
+  agree(mini(2, ['ab', 'ac', 'ba'], ['ab', 'ac', 'ba']));
+  agree(mini(3, ['abc', 'abx', 'axy', 'zzz'], ['abc', 'abx', 'axy', 'zzz', 'aaa', 'bxz']));
+
+  function randWord(rand, alpha) {
+    let s = '';
+    for (let i = 0; i < 3; i++) s += alpha[Math.floor(rand() * alpha.length)];
+    return s;
+  }
+  function rng(seed) {
+    let a = seed >>> 0;
+    return function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  [2, 9, 21, 44].forEach(function (seed) {
+    const rand = rng(seed);
+    const alpha = 'abcdef';
+    const seen = new Set();
+    const answers = [];
+    while (answers.length < 4) {
+      const w = randWord(rand, alpha);
+      if (seen.has(w)) continue;
+      seen.add(w);
+      answers.push(w);
+    }
+    const guesses = answers.slice();
+    while (guesses.length < 7) {
+      const w = randWord(rand, alpha);
+      if (seen.has(w)) continue;
+      seen.add(w);
+      guesses.push(w);
+    }
+    agree(mini(3, answers, guesses));
+  });
+});
+
+check('cut-down steps are an upper bound on the exact tree', function () {
+  const eng = mini(2, ['ab', 'cd', 'ef', 'gh', 'ij', 'kl'], ['ab', 'cd', 'ef', 'gh', 'ij', 'kl', 'ae', 'xx']);
+  const answers = eng.knownIdx.slice();
+  const guesses = [];
+  for (let i = 0; i < eng.nWords; i++) guesses.push(i);
+  const oracle = oracleSteps(eng, answers, guesses);
+  const got = scoreSteps(eng, answers, guesses, {
+    guessMode: 'dictionary', hard: 'off', clues: [], dict: dictOf(eng),
+    limits: { exactSet: 3, exactPool: 3, rankAllMax: 20, contPool: 3, nodeBeam: 1, beamExp: 20, beamEnt: 0, beamWorst: 0 }
+  });
+  let sawApprox = false;
+  guesses.forEach(function (g) {
+    const row = got[eng.keys[g]];
+    assert.ok(row.steps + 1e-9 >= oracle[g], eng.keys[g] + ' ' + row.steps + ' < ' + oracle[g]);
+    if (row.approx) sawApprox = true;
+  });
+  assert.ok(sawApprox);
+});
+
+check('steps limits in the UI match the search', function () {
+  const lim = Core.stepsLimits;
+  const phrase = 'Exact through ' + lim.exactSet + ' answers (at most ' + lim.exactPool +
+    ' guesses tried at one of those nodes). A dictionary larger than ' + lim.shortlist +
+    ' is cut to that many probes for the whole search, and the answers still in the set are always added back. Every guess in the pool is valued when at most ' +
+    lim.rankAllMax + ' answers remain and the pool has at most ' + lim.rankAllPool +
+    ' rows; above that, deepen a beam of ' + lim.beamExp + ' expected-remaining, ' + lim.beamEnt +
+    ' entropy, and ' + lim.beamWorst + ' worst-case guesses. Larger sets continue with the top ' +
+    lim.nodeBeam + ' one-ply pick' + (lim.nodeBeam === 1 ? '' : 's') + ' from ' + lim.contPool + ' candidates.';
+  ['src/index.html', 'README.md', 'src/README.txt', 'docs/pack-format.md'].forEach(function (rel) {
+    const text = fs.readFileSync(path.join(root, rel), 'utf8');
+    assert.ok(text.indexOf(phrase) >= 0, rel + ' is missing the steps-limit sentence');
+  });
+  const html = fs.readFileSync(path.join(root, 'src/index.html'), 'utf8');
+  assert.ok(html.indexOf('value="steps"') >= 0);
+  assert.ok(html.indexOf('Fewest expected steps to solve') >= 0);
+  assert.ok(html.indexOf('>Steps<') >= 0);
+  const app = fs.readFileSync(path.join(root, 'src/app.js'), 'utf8');
+  const worker = fs.readFileSync(path.join(root, 'src/worker.js'), 'utf8');
+  assert.ok(app.indexOf('attachExpectedSteps') >= 0);
+  assert.ok(worker.indexOf("d.mode === 'steps'") >= 0);
+});
+
 Promise.all(pending).then(function () {
   console.log(passed + ' passed');
 }).catch(function (err) {
