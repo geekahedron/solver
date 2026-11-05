@@ -11,6 +11,33 @@ h1{margin:4px 0 2px;font-size:26px}
 .page-modes button.on{background:var(--orange);color:#1a0d00;border-color:var(--orange)}
 body[data-page="scenario"] #analysis{display:none}
 body[data-page="analysis"] #scenarioCard{display:none}
+#treeCard{display:none}
+body[data-page="tree"] #treeCard{display:block}
+body[data-page="tree"] #analysis,
+body[data-page="tree"] #scenarioCard{display:none}
+.opener-picks{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.tree-stats{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
+.tree-stats .stat{background:var(--navy);border-radius:8px;padding:8px 10px;min-width:6.5em}
+.tree-stats .stat b{display:block;font-size:18px;color:var(--orange)}
+.tree-stats .stat.warn b{color:#ffb066}
+.tree-crumb{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0}
+.tree-crumb button{padding:4px 8px;font-size:12.5px}
+.tree-row{border-top:1px solid var(--line);padding:6px 0}
+.tree-row>.row{display:flex;align-items:center;gap:10px;cursor:default;flex-wrap:wrap}
+.tree-row.tree-open>.row{cursor:pointer}
+.tree-row.tree-over>.row{box-shadow:inset 3px 0 0 var(--orange)}
+.tree-row .code{font-family:ui-monospace,Menlo,Consolas,monospace;color:var(--muted);min-width:6em}
+.tree-row .cnt{font-weight:700;color:var(--orange);min-width:4.5em}
+.tree-row .next{font-family:ui-monospace,Menlo,Consolas,monospace;font-weight:700;text-transform:uppercase;min-width:5em}
+.tree-row .preview{color:var(--muted);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.tree-row .tiles .tile{min-width:22px;height:22px;font-size:11px}
+.tree-answers{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.tree-answers .ans{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;text-transform:uppercase;background:var(--navy);border-radius:6px;padding:3px 7px}
+.tree-answers .ans.over{background:#5a2a00;color:#ffb066}
+.tree-answers .ans.unproved{color:var(--muted);font-style:italic}
+.tree-head{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:8px 0 4px}
+details.tree-all{margin-top:12px;border-top:1px solid var(--line);padding-top:8px}
+details.tree-all>summary{cursor:pointer;color:var(--muted)}
 main{max-width:1100px;margin:0 auto;padding:8px 12px 24px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin:12px 0}
 .card h2{font-size:18px;margin:0 0 10px;display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap}

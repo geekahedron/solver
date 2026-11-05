@@ -17,6 +17,7 @@
     <button type="button" class="ghost on" data-page="both">Both</button>
     <button type="button" class="ghost" data-page="scenario">Scenario</button>
     <button type="button" class="ghost" data-page="analysis">Analysis</button>
+    <button type="button" class="ghost" data-page="tree">Tree</button>
   </div>
 </header>
 
@@ -143,7 +144,7 @@
       <label class="chk"><input type="checkbox" id="cfgGuarantee"> Guarantee a finish within n steps for every remaining answer</label>
       <label class="steps-n">n <input type="number" id="cfgSteps" min="1" max="30" value="6"></label>
     </div>
-    <p class="muted small" id="guaranteeHelp">From this position, every answer still in the list must be finishable in at most <b>n</b> further guesses, counting the guess being scored. Later guesses follow the active guess mode and hard-mode rules on every step, the same continuation rules as expected steps. <b>n</b> starts at 6 minus clues already entered (a Wordle budget) and updates as clues are added or undone, until you edit the number. <b>Steps</b> is the average number of guesses. <b>Max steps</b> is the worst-case number. <b>Worst</b> is only the largest group this one guess leaves. With the box checked, the current scoring mode — including fewest expected steps — ranks only the guesses that proved Max steps ≤ n. On a long list the Max steps search beams continuations and keeps a guess only when a line is proved; an unproved guess is never treated as guaranteed.</p>
+    <p class="muted small" id="guaranteeHelp">From this position, every answer still in the list must be finishable in at most <b>n</b> further guesses, counting the guess being scored. Later guesses follow the active guess mode and hard-mode rules on every step, the same continuation rules as expected steps. <b>n</b> starts at 6 minus clues already entered (a Wordle budget) and updates as clues are added or undone, until you edit the number. <b>Steps</b> is the average number of guesses. <b>Max steps</b> is the worst-case number. <b>Worst</b> is only the largest group this one guess leaves. With the box checked, the current scoring mode — including fewest expected steps — ranks only the guesses that proved Max steps ≤ n. On a long list the Max steps search beams continuations and keeps a guess only when a line is proved; an unproved guess is never treated as guaranteed. A full English opening often returns nothing that way. <b>Tree</b> is the other view: pick one starting word, play out a strategy, and see which answers exceed n.</p>
     <div id="scoreStatus" class="muted small"></div>
     <div class="tablewrap">
       <table id="sugTable" class="data">
@@ -167,12 +168,65 @@
     <div id="bdRows"></div>
   </section>
   </div>
+
+  <section class="card" id="treeCard">
+    <h2>Opener solve tree</h2>
+    <p class="muted small">Pick a starting guess and expand its decision tree on the answers still possible. After the opener, each result shows the next guess and the words that remain — the same shape as <a href="https://jonathanolson.net/wordle-solver/">Jonathan Olson’s solver</a>. This tree is built in the browser for the list you have loaded. It is not his precomputed NYT Wordle tree: the built-in packs are ENABLE subsets (SALET and SOARE are not in them; TARPS is on the guess list), every answer is equally likely, and a long hard-mode list is too big for an exhaustive proof. The guarantee checkbox is unchanged and still fail-closed. Here one concrete strategy is played instead. Later guesses use the active guess mode and hard-mode rules. <b>n</b> is further guesses from here, starting at 6 minus clues already entered.</p>
+    <div class="opener-picks" id="treePicks"></div>
+    <div class="grid3">
+      <label>Starting guess
+        <input type="text" id="treeOpener" list="treeOpenerList" placeholder="slate" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <datalist id="treeOpenerList"></datalist>
+      </label>
+      <label>Later guesses
+        <select id="treePolicy">
+          <option value="worst">Worst-case depth</option>
+          <option value="steps">Fewest expected steps</option>
+        </select>
+      </label>
+      <label>Budget n <input type="number" id="treeBudget" min="1" max="30" value="6"></label>
+    </div>
+    <div class="grid3">
+      <label>Guess mode
+        <select id="treeGuessMode">
+          <option value="dictionary">Dictionary (valid guesses)</option>
+          <option value="any">Any (length and alphabet)</option>
+          <option value="hard">Hard (must fit every clue)</option>
+          <option value="answersOnly">Answers still possible</option>
+        </select>
+      </label>
+      <label>Hard mode
+        <select id="treeHard">
+          <option value="off">Off</option>
+          <option value="wordle">Wordle hard (reuse greens &amp; yellows)</option>
+          <option value="strict">Strict (guess must fit all clues)</option>
+        </select>
+      </label>
+      <label>Solution layer
+        <select id="treeLayer">
+          <option value="known">Known answers</option>
+          <option value="theoretical">Theoretical solutions</option>
+          <option value="preferred">Known preferred</option>
+        </select>
+      </label>
+    </div>
+    <p class="muted small">Guess mode, hard mode, and the solution layer are the same settings as Analysis. Wordle hard reuses greens and yellows on every later guess in the tree.</p>
+    <div class="row-btns">
+      <button type="button" id="treeBuild">Build tree</button>
+      <span id="treeStatus" class="muted small"></span>
+    </div>
+    <p class="warn small" id="treeStale" hidden>Settings or clues changed. This tree is the previous one.</p>
+    <div id="treeSummary"></div>
+    <div id="treeFamilies"></div>
+    <div id="treeWalk"></div>
+  </section>
 </main>
 
 <footer class="foot">
   <p>Runs entirely in your browser — nothing is uploaded. Built-in English packs: ENABLE word list (public domain); answer subsets chosen by word frequency. See <a href="README.txt">README</a>.</p>
 </footer>
 <script src="core.js"></script>
+<script src="tree.js"></script>
 <script src="pack.js"></script>
 <script src="engine.js"></script>
 <script src="renderers.js"></script>

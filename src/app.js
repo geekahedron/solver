@@ -21,7 +21,7 @@
   var cfg = { L: 5, alpha: 'abcdefghijklmnopqrstuvwxyz', ci: true, tok: false, rule: 'wordle', valid: 'both',
     mode: 'avg', hard: 'off', ansOnly: false, max: 12000, top: 15, notation: 'GYB',
     layer: 'known', guessMode: 'dictionary', page: 'both',
-    guarantee: false, steps: 6, stepsTouched: false };
+    guarantee: false, steps: 6, stepsTouched: false, treePolicy: 'worst' };
   var packId = 'en5';
   var engine = null;
   var manifestP = null;
@@ -31,6 +31,8 @@
   var remTheo = [];
   var lastTop = [], selectedKey = null, autoSel = true, bdFilterPat = null;
   var worker = null, reqId = 0, scoreTimer = null;
+  var treeWorker = null, treeReq = 0, treeResult = null, treeSig = '', treePath = [], treeOnlyOver = false, treeListOpen = false;
+  var TREE_OPENERS = ['slate', 'tarps', 'crane', 'cramp', 'trace', 'stare', 'crate', 'raise', 'alert', 'later'];
 
   function inferGuessMode() {
     if (cfg.ansOnly) return 'answersOnly';
@@ -245,7 +247,12 @@
     if (cfg.layer === 'preferred' && !remKnown.length) return 'theoretical solutions';
     return 'known answers';
   }
-  function scheduleScore() { clearTimeout(scoreTimer); scoreTimer = setTimeout(runScore, 120); }
+  function scheduleScore() {
+    markTreeStale();
+    if (cfg.page === 'tree') return;
+    clearTimeout(scoreTimer);
+    scoreTimer = setTimeout(runScore, 120);
+  }
   function stepsPayload() {
     var dict = null;
     if (cfg.guessMode !== 'answersOnly') {
@@ -386,6 +393,7 @@
     if (!cfg.stepsTouched) {
       cfg.steps = Math.max(1, 6 - clues.length);
       if ($('cfgSteps')) $('cfgSteps').value = cfg.steps;
+      if ($('treeBudget')) $('treeBudget').value = cfg.steps;
     }
     renderClues(); renderRemaining(); renderPreview();
     selectedKey = null; autoSel = true;
@@ -413,6 +421,9 @@
     $('cfgRule').value = cfg.rule; $('cfgValid').value = cfg.valid; $('cfgMode').value = cfg.mode; $('cfgHard').value = cfg.hard;
     $('cfgAnsOnly').checked = cfg.ansOnly; $('cfgMax').value = cfg.max; $('cfgTop').value = cfg.top; $('cfgNotation').value = cfg.notation;
     $('cfgGuarantee').checked = !!cfg.guarantee; $('cfgSteps').value = cfg.steps || 6;
+    if ($('treeBudget')) $('treeBudget').value = cfg.steps || 6;
+    if ($('treePolicy')) $('treePolicy').value = cfg.treePolicy || 'worst';
+    mirrorTreeRules();
     $('cfgLayer').value = cfg.layer || 'known';
     $('cfgGuessMode').value = cfg.guessMode || inferGuessMode();
     applyPage(cfg.page || 'both', true);
@@ -423,6 +434,8 @@
     if (engine.dup) msg += ' · ' + engine.dup + ' duplicates merged';
     $('packMsg').textContent = msg;
     $('packSummary').textContent = ($('packSel').selectedOptions[0] || {}).textContent + ' · ' + engine.nKnown.toLocaleString() + ' answers';
+    dropTree();
+    fillTreeOpeners();
     cfg.L = engine.pack.length;
     if (!keepClues) clues = [];
     else clues = clues.map(function (c) {
@@ -532,10 +545,15 @@
       saveState();
     });
   });
+  function mirrorTreeRules() {
+    if ($('treeHard')) $('treeHard').value = cfg.hard;
+    if ($('treeGuessMode')) $('treeGuessMode').value = cfg.guessMode || 'dictionary';
+    if ($('treeLayer')) $('treeLayer').value = cfg.layer || 'known';
+  }
   $('cfgHard').addEventListener('change', function () {
-    cfg.hard = this.value; syncGuessModeLabel(); renderClues(); scheduleScore(); saveState();
+    cfg.hard = this.value; syncGuessModeLabel(); mirrorTreeRules(); renderClues(); scheduleScore(); saveState();
   });
-  $('cfgAnsOnly').addEventListener('change', function () { cfg.ansOnly = this.checked; syncGuessModeLabel(); scheduleScore(); saveState(); });
+  $('cfgAnsOnly').addEventListener('change', function () { cfg.ansOnly = this.checked; syncGuessModeLabel(); mirrorTreeRules(); scheduleScore(); saveState(); });
   $('cfgMax').addEventListener('change', function () { cfg.max = Math.max(10, parseInt(this.value, 10) || 12000); scheduleScore(); saveState(); });
   $('cfgTop').addEventListener('change', function () { cfg.top = Math.max(1, Math.min(500, parseInt(this.value, 10) || 15)); scheduleScore(); saveState(); });
   $('cfgGuarantee').addEventListener('change', function () { cfg.guarantee = this.checked; scheduleScore(); saveState(); });
@@ -543,11 +561,12 @@
     cfg.stepsTouched = true;
     cfg.steps = Math.max(1, Math.min(30, parseInt(this.value, 10) || 1));
     this.value = cfg.steps;
+    if ($('treeBudget')) $('treeBudget').value = cfg.steps;
     scheduleScore();
     saveState();
   });
   $('cfgValid').addEventListener('change', function () {
-    cfg.valid = this.value; syncGuessModeLabel();
+    cfg.valid = this.value; syncGuessModeLabel(); mirrorTreeRules();
     clues.forEach(function (c) { c.note = validityNote(c.key); });
     renderClues(); scheduleScore(); saveState();
   });
@@ -556,7 +575,7 @@
     if (engine) engine.feedbackRule = this.value === 'simple' ? 'simple' : 'wordle';
     refresh();
   });
-  $('cfgLayer').addEventListener('change', function () { cfg.layer = this.value; refresh(); });
+  $('cfgLayer').addEventListener('change', function () { cfg.layer = this.value; mirrorTreeRules(); refresh(); });
   $('cfgGuessMode').addEventListener('change', function () {
     var mode = this.value;
     cfg.guessMode = mode;
@@ -565,8 +584,21 @@
     else if (mode === 'answersOnly') { cfg.valid = 'both'; cfg.hard = 'off'; cfg.ansOnly = true; }
     else { cfg.valid = 'both'; cfg.hard = 'off'; cfg.ansOnly = false; cfg.guessMode = 'dictionary'; }
     $('cfgValid').value = cfg.valid; $('cfgHard').value = cfg.hard; $('cfgAnsOnly').checked = cfg.ansOnly;
+    mirrorTreeRules();
     clues.forEach(function (c) { c.note = validityNote(c.key); });
     renderClues(); scheduleScore(); saveState();
+  });
+  $('treeHard').addEventListener('change', function () {
+    $('cfgHard').value = this.value;
+    $('cfgHard').dispatchEvent(new Event('change'));
+  });
+  $('treeGuessMode').addEventListener('change', function () {
+    $('cfgGuessMode').value = this.value;
+    $('cfgGuessMode').dispatchEvent(new Event('change'));
+  });
+  $('treeLayer').addEventListener('change', function () {
+    $('cfgLayer').value = this.value;
+    $('cfgLayer').dispatchEvent(new Event('change'));
   });
 
   function applyPage(page, silent) {
@@ -575,12 +607,387 @@
     Array.prototype.forEach.call(document.querySelectorAll('#pageModes button'), function (b) {
       b.classList.toggle('on', b.getAttribute('data-page') === cfg.page);
     });
-    if (!silent) saveState();
+    if (!silent) {
+      saveState();
+      if (cfg.page !== 'tree') scheduleScore();
+    }
   }
   $('pageModes').addEventListener('click', function (e) {
     var b = e.target.closest('button[data-page]'); if (!b) return;
     applyPage(b.getAttribute('data-page'));
   });
+
+  function treeWord(gi) {
+    if (gi == null || gi < 0 || !engine || !engine.keys[gi]) return ($('treeOpener').value || '').trim();
+    return engine.keys[gi];
+  }
+  function treeSyms(gi) {
+    if (gi == null || gi < 0 || !engine || !engine.tokens[gi]) return Pack.parseWord($('treeOpener').value || '', activePack());
+    return engine.tokens[gi];
+  }
+  function treeGuessIdx() {
+    if (cfg.valid === 'answers' && cfg.guessMode !== 'any' && cfg.guessMode !== 'hard' && cfg.guessMode !== 'answersOnly') {
+      return engine.knownIdx;
+    }
+    return engine.guessIdx;
+  }
+  function currentTreeSig() {
+    var clueSig = clues.map(function (c) { return c.key + ':' + c.pat; }).join(',');
+    var h = 0, i;
+    for (i = 0; i < remaining.length; i++) h = (h * 33 + remaining[i]) | 0;
+    return [
+      cfg.hard, cfg.guessMode, cfg.layer, cfg.rule, cfg.valid, cfg.steps,
+      ($('treePolicy') && $('treePolicy').value) || cfg.treePolicy || 'worst',
+      ($('treeOpener') && $('treeOpener').value || '').trim().toLowerCase(),
+      clueSig, remaining.length, h
+    ].join('|');
+  }
+  function markTreeStale() {
+    var el = $('treeStale');
+    if (!el) return;
+    el.hidden = !treeResult || treeSig === currentTreeSig();
+  }
+  function fillTreeOpeners() {
+    if (!$('treePicks') || !engine) return;
+    var have = [];
+    TREE_OPENERS.forEach(function (w) { if (engine.keyIdx.has(w)) have.push(w); });
+    $('treePicks').innerHTML = have.map(function (w) {
+      return '<button type="button" class="ghost mini" data-pick="' + esc(w) + '">' + esc(w.toUpperCase()) + '</button>';
+    }).join('');
+    $('treeOpenerList').innerHTML = have.map(function (w) {
+      return '<option value="' + esc(w) + '"></option>';
+    }).join('');
+    var cur = ($('treeOpener').value || '').trim();
+    var enc = cur ? engine.encode(cur) : null;
+    if (!cur || (enc && enc.err)) $('treeOpener').value = have[0] || '';
+  }
+  function dropTree() {
+    treeReq++;
+    if (treeWorker) { treeWorker.terminate(); treeWorker = null; }
+    treeResult = null;
+    treeSig = '';
+    treePath = [];
+    renderTree();
+    var stale = $('treeStale');
+    if (stale) stale.hidden = true;
+    if ($('treeStatus')) $('treeStatus').textContent = 'Choose a starting word and build its tree.';
+  }
+  function treeNode() {
+    var node = treeResult && treeResult.root;
+    var i, ch;
+    if (!node) return null;
+    for (i = 0; i < treePath.length; i++) {
+      ch = node.children && node.children[treePath[i]];
+      if (!ch || !ch.node) { treePath = treePath.slice(0, i); break; }
+      node = ch.node;
+    }
+    return node;
+  }
+  function worstLine(node) {
+    var line = [], guard = 0, cur = node, best, kids, i;
+    while (cur && cur.guess != null && guard++ < 16) {
+      line.push(cur.guess);
+      best = null;
+      kids = cur.children || [];
+      for (i = 0; i < kids.length; i++) {
+        if (!kids[i].node) continue;
+        if (!best || (kids[i].maxDepth || 0) > (best.maxDepth || 0)) best = kids[i];
+      }
+      if (!best) break;
+      cur = best.node;
+    }
+    return line;
+  }
+  function treeHonesty(s, root) {
+    var parts = [];
+    if (s.openerOutsidePool) parts.push('This starting guess is outside the current guess pool. It is still played first. Later guesses follow the active rules.');
+    if (s.openerBreaksHard) parts.push('This starting guess breaks hard mode. Later guesses still have to obey it.');
+    if (root && root.wasted) parts.push('This guess does not split the list. It costs a turn, then the policy continues.');
+    if (!s.playedOut) {
+      if (s.truncated) parts.push(s.unproved + ' answers were cut off before they were solved. They are unproved and are not a finish within n.');
+      else if (s.unproved) parts.push(s.unproved + ' answers have no proved depth.');
+      if (s.stuck) parts.push(s.stuck + (s.stuck === 1 ? ' answer has' : ' answers have') + ' no legal next guess under these rules.');
+    } else if (s.guaranteed) {
+      parts.push('Guaranteed: every answer is solved in ' + s.maxDepth + ' or fewer, and every later guess was an exhaustive choice.');
+    } else if (s.strategyFits) {
+      parts.push('This strategy solves every answer within n (worst ' + s.maxDepth + '). Some later guesses came from a shortlist, so this is weaker than the guarantee checkbox.');
+    } else if (s.provedImpossible) {
+      parts.push('Proved: under these rules, no worst-case line from this opener stays within n. The longest answer takes ' + s.maxDepth + '.');
+    } else if (s.overBudget && s.policyApprox) {
+      parts.push(s.overBudget + (s.overBudget === 1 ? ' answer takes' : ' answers take') + ' more than n on this strategy. A different continuation might still fit. That was not proved.');
+    } else if (s.overBudget) {
+      parts.push(s.overBudget + (s.overBudget === 1 ? ' answer takes' : ' answers take') + ' more than n on this ' + (s.policy === 'steps' ? 'expected-steps' : 'worst-case') + ' line.');
+    }
+    return parts.join(' ');
+  }
+  function renderTree() {
+    var sumEl = $('treeSummary'), famEl = $('treeFamilies'), walkEl = $('treeWalk');
+    if (!sumEl) return;
+    if (!treeResult || !treeResult.root) {
+      sumEl.innerHTML = '';
+      famEl.innerHTML = '';
+      walkEl.innerHTML = '';
+      return;
+    }
+    var tree = treeResult, s = tree.summary, node = treeNode();
+    var hist = {}, hi;
+    tree.depths.forEach(function (d) {
+      var k = d.proved ? String(d.depth) : '?';
+      hist[k] = (hist[k] || 0) + 1;
+    });
+    var histKeys = Object.keys(hist).sort(function (a, b) {
+      if (a === '?') return 1;
+      if (b === '?') return -1;
+      return (+a) - (+b);
+    });
+    var expTxt = s.expected == null ? '—' : fmt(s.expected, 2);
+    var html = '<div class="tree-stats">';
+    html += '<div class="stat' + (s.maxDepth > s.budget ? ' warn' : '') + '"><b>' + (s.maxDepth == null ? '—' : s.maxDepth) + '</b>max depth</div>';
+    html += '<div class="stat' + (s.overBudget ? ' warn' : '') + '"><b>' + s.overBudget + '</b>over n</div>';
+    html += '<div class="stat"><b>' + expTxt + '</b>expected</div>';
+    html += '<div class="stat' + (s.unproved ? ' warn' : '') + '"><b>' + s.unproved + '</b>unproved</div>';
+    html += '<div class="stat"><b>' + s.answers + '</b>answers</div>';
+    html += '</div>';
+    html += '<p class="muted small">' + esc(treeHonesty(s, tree.root)) + '</p>';
+    if (histKeys.length) {
+      html += '<p class="muted small">Depths: ' + histKeys.map(function (k) { return k + '×' + hist[k]; }).join(' · ') + '</p>';
+    }
+    sumEl.innerHTML = html;
+    var listHtml = '';
+    var shown = 0;
+    for (hi = 0; hi < tree.depths.length; hi++) {
+      var d = tree.depths[hi];
+      var over = d.proved && d.depth > s.budget;
+      if (treeOnlyOver && d.proved && !over) continue;
+      var cls = 'ans' + (!d.proved ? ' unproved' : (over ? ' over' : ''));
+      var title = d.proved ? (d.depth + ' · ' + (d.pats || []).map(function (p) { return patCode(patToDigits(p)); }).join(' → ')) : (d.reason || 'unproved');
+      listHtml += '<span class="' + cls + '" title="' + esc(title) + '">' + esc(engine.keys[d.idx]) + (d.proved ? ' ' + d.depth : ' ?') + '</span>';
+      if (++shown >= 2500) break;
+    }
+
+    var groups = new Map();
+    tree.depths.forEach(function (row) {
+      if (!row.proved || row.depth <= s.budget) return;
+      var pat = row.pats && row.pats.length ? row.pats[0] : -1;
+      var g = groups.get(pat);
+      if (!g) groups.set(pat, g = []);
+      g.push(row);
+    });
+    var fams = [];
+    groups.forEach(function (rows, pat) {
+      rows.sort(function (a, b) { return b.depth - a.depth || a.idx - b.idx; });
+      fams.push({ pat: pat, rows: rows });
+    });
+    fams.sort(function (a, b) { return b.rows[0].depth - a.rows[0].depth || b.rows.length - a.rows.length; });
+    var famHtml = '';
+    if (!fams.length && s.playedOut && !s.overBudget) famHtml = '<p class="ok small">Every played answer finishes within n.</p>';
+    else if (fams.length) {
+      famHtml = '<h3 style="font-size:14px;margin:12px 0 6px">Answers over n</h3>';
+      fams.forEach(function (f) {
+        var words = f.rows.map(function (row) { return engine.keys[row.idx]; });
+        famHtml += '<div class="tree-row tree-over"><div class="row">';
+        if (f.pat >= 0 && tree.root.guess != null) {
+          famHtml += tilesHTML(treeSyms(tree.root.guess), patToDigits(f.pat));
+          famHtml += '<span class="code">' + esc(patCode(patToDigits(f.pat))) + '</span>';
+        }
+        famHtml += '<span class="cnt">' + f.rows.length + ' over</span><span>max ' + f.rows[0].depth + '</span>';
+        famHtml += '<span class="preview">' + esc(words.slice(0, 16).join(' ')) + (words.length > 16 ? ' …' : '') + '</span>';
+        famHtml += '</div></div>';
+      });
+      var line = worstLine(tree.root).map(function (gi) { return treeWord(gi).toUpperCase(); });
+      if (line.length) famHtml += '<p class="muted small">Longest branch: ' + esc(line.join(' → ')) + '</p>';
+    }
+    if (s.unproved) famHtml += '<p class="muted small">' + s.unproved + ' answers are unproved on this build.</p>';
+    famEl.innerHTML = famHtml;
+
+    if (!node) { walkEl.innerHTML = ''; return; }
+    var crumbs = '<div class="tree-crumb"><button type="button" class="ghost mini" data-crumb="0">' + esc(treeWord(tree.root.guess).toUpperCase() || 'opener') + '</button>';
+    var walk = tree.root, ci;
+    for (ci = 0; ci < treePath.length; ci++) {
+      var step = walk.children[treePath[ci]];
+      if (!step) break;
+      var crumb = patCode(patToDigits(step.pat));
+      if (step.node && step.node.guess != null) crumb += ' ' + treeWord(step.node.guess).toUpperCase();
+      crumbs += '<span class="muted">›</span><button type="button" class="ghost mini" data-crumb="' + (ci + 1) + '">' + esc(crumb) + '</button>';
+      if (!step.node) break;
+      walk = step.node;
+    }
+    crumbs += '</div>';
+    var mark = (!node.forced && node.policyExact === false) ? ' ≈' : '';
+    var head = '<div class="tree-head"><b>' + esc((treeWord(node.guess) || '—').toUpperCase()) + mark + '</b>';
+    head += '<span class="muted small">' + node.n + ' answers';
+    if (node.maxDepth != null) head += ' · max ' + node.maxDepth;
+    if (node.over) head += ' · ' + node.over + ' over n';
+    if (node.wasted) head += ' · no split';
+    if (node.cut) head += ' · cut off';
+    if (node.stuck) head += ' · no legal guess';
+    head += '</span></div>';
+    if (node.cut) head += '<p class="warn small">This branch was cut off. Its answers are unproved.</p>';
+    if (node.stuck) head += '<p class="warn small">No legal guess separates this set under the current rules.</p>';
+    var rows = '';
+    var kids = node.children || [];
+    for (ci = 0; ci < kids.length; ci++) {
+      var ch = kids[ci];
+      var open = ch.node ? ' tree-open' : '';
+      var hot = ch.over ? ' tree-over' : '';
+      var words = (ch.answers || []).slice(0, 12).map(function (idx) { return engine.keys[idx]; });
+      rows += '<div class="tree-row' + open + hot + '"><div class="row"' + (ch.node ? ' data-down="' + ci + '"' : '') + '>';
+      rows += tilesHTML(treeSyms(node.guess), patToDigits(ch.pat));
+      rows += '<span class="code">' + esc(patCode(patToDigits(ch.pat))) + '</span>';
+      rows += '<span class="cnt">' + (ch.solved ? 'solved' : ch.n + ' left') + '</span>';
+      if (ch.solved) rows += '<span class="next">solved</span>';
+      else if (ch.node && ch.node.guess != null) rows += '<span class="next">' + esc(treeWord(ch.node.guess)) + ((!ch.node.forced && ch.node.policyExact === false) ? ' ≈' : '') + '</span>';
+      else rows += '<span class="next">…</span>';
+      if (ch.maxDepth != null) rows += '<span' + (ch.maxDepth > s.budget ? ' class="warn"' : '') + '>max ' + ch.maxDepth + '</span>';
+      if (ch.over) rows += '<span class="warn">' + ch.over + ' over</span>';
+      if (ch.unproved) rows += '<span class="muted">' + ch.unproved + ' unproved</span>';
+      rows += '<span class="preview">' + esc(words.join(' ')) + ((ch.answers && ch.answers.length > 12) ? ' …' : '') + '</span>';
+      rows += '<button type="button" class="ghost mini" data-use="' + ch.pat + '">use</button>';
+      rows += '</div></div>';
+    }
+    if (!kids.length && node.solved) {
+      rows = '<p class="ok small">Solved in ' + node.maxDepth + '.</p>';
+    }
+    var checked = treeOnlyOver ? ' checked' : '';
+    var list = '<details class="tree-all"' + (treeListOpen ? ' open' : '') + '><summary>All answers by depth (' + tree.depths.length + ')</summary>';
+    list += '<label class="chk"><input type="checkbox" id="treeOnlyOver"' + checked + '> Hide answers within n</label>';
+    list += '<div class="tree-answers">' + listHtml + '</div></details>';
+    walkEl.innerHTML = crumbs + head + rows + list;
+  }
+  function runTree() {
+    if (!engine) return;
+    var raw = ($('treeOpener').value || '').trim();
+    var enc = engine.encode(raw);
+    if (!raw || enc.err) {
+      $('treeStatus').innerHTML = '<span class="warn">' + esc(enc && enc.err ? enc.err : 'Type a starting guess.') + '</span>';
+      return;
+    }
+    if (!remaining.length) {
+      $('treeStatus').innerHTML = '<span class="warn">No answers left to build a tree on.</span>';
+      return;
+    }
+    var n = parseInt($('treeBudget').value, 10);
+    if (n) {
+      cfg.steps = Math.max(1, Math.min(30, n));
+      $('treeBudget').value = cfg.steps;
+      if ($('cfgSteps')) $('cfgSteps').value = cfg.steps;
+    }
+    cfg.treePolicy = $('treePolicy').value || 'worst';
+    var id = ++treeReq;
+    var sig = currentTreeSig();
+    var idx = engine.keyIdx.has(enc.key) ? engine.keyIdx.get(enc.key) : -1;
+    var msg = {
+      type: 'tree', id: id,
+      U: engine.U, L: cfg.L, K: engine.syms.length, rule: engine.feedbackRule,
+      rem: Int32Array.from(remaining),
+      guessIdx: Int32Array.from(treeGuessIdx()),
+      clues: clues.map(function (c) {
+        return { ids: Array.prototype.slice.call(c.ids), pat: c.pat, digits: c.digits.slice() };
+      }),
+      hard: cfg.hard, guessMode: cfg.guessMode,
+      opener: idx, openerIds: Array.prototype.slice.call(enc.ids),
+      budget: cfg.steps, policy: cfg.treePolicy,
+      limits: { timeCapMs: 12000 }
+    };
+    function show(tree, ms) {
+      if (id !== treeReq) return;
+      treeResult = tree;
+      treeSig = sig;
+      treePath = [];
+      treeOnlyOver = false;
+      treeListOpen = false;
+      renderTree();
+      var tail = 'Built in ' + ms + ' ms.';
+      if (tree.summary.truncated) tail += ' Stopped at the time limit.';
+      $('treeStatus').textContent = tail;
+      markTreeStale();
+      saveState();
+    }
+    $('treeStatus').innerHTML = 'Building tree for <b>' + esc(enc.key.toUpperCase()) + '</b>…<div class="bar"><i id="treeBar"></i></div>';
+    if (treeWorker) { treeWorker.terminate(); treeWorker = null; }
+    try {
+      if (location.protocol === 'file:') throw new Error('no worker on file://');
+      treeWorker = new Worker('worker.js');
+      treeWorker.onmessage = function (e) {
+        var d = e.data;
+        if (!d || d.id !== id || d.id !== treeReq) return;
+        if (d.type === 'progress') {
+          var bar = $('treeBar');
+          if (bar) bar.style.width = (100 * d.done / Math.max(1, d.total)) + '%';
+          return;
+        }
+        if (d.type === 'tree') {
+          show(d.tree, d.ms);
+          if (treeWorker) { treeWorker.terminate(); treeWorker = null; }
+        }
+      };
+      treeWorker.onerror = function () { treeWorker = null; syncTree(); };
+      treeWorker.postMessage(msg);
+    } catch (err) { syncTree(); }
+    function syncTree() {
+      setTimeout(function () {
+        var t0 = Date.now();
+        var tree = Core.buildOpenerTree(msg, function (done, total) {
+          if (id !== treeReq) return;
+          var bar = $('treeBar');
+          if (bar) bar.style.width = (100 * done / Math.max(1, total)) + '%';
+        });
+        show(tree, Date.now() - t0);
+      }, 10);
+    }
+  }
+  $('treeBuild').addEventListener('click', runTree);
+  $('treeOpener').addEventListener('keydown', function (e) { if (e.key === 'Enter') runTree(); });
+  $('treeOpener').addEventListener('input', function () { markTreeStale(); });
+  $('treePolicy').addEventListener('change', function () {
+    cfg.treePolicy = this.value;
+    markTreeStale();
+    saveState();
+  });
+  $('treeBudget').addEventListener('change', function () {
+    cfg.stepsTouched = true;
+    cfg.steps = Math.max(1, Math.min(30, parseInt(this.value, 10) || 1));
+    this.value = cfg.steps;
+    if ($('cfgSteps')) $('cfgSteps').value = cfg.steps;
+    markTreeStale();
+    saveState();
+    if (cfg.page !== 'tree') scheduleScore();
+  });
+  $('treePicks').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-pick]');
+    if (!b) return;
+    $('treeOpener').value = b.getAttribute('data-pick');
+    runTree();
+  });
+  $('treeCard').addEventListener('click', function (e) {
+    var use = e.target.closest('[data-use]');
+    if (use) {
+      e.preventDefault();
+      var node = treeNode();
+      if (node) addClue(treeWord(node.guess), patToDigits(+use.getAttribute('data-use')));
+      return;
+    }
+    var down = e.target.closest('[data-down]');
+    if (down) {
+      var cur = treeNode();
+      var ch = cur && cur.children && cur.children[+down.getAttribute('data-down')];
+      if (ch && ch.node) { treePath.push(+down.getAttribute('data-down')); renderTree(); }
+      return;
+    }
+    var crumb = e.target.closest('[data-crumb]');
+    if (!crumb) return;
+    treePath = treePath.slice(0, +crumb.getAttribute('data-crumb'));
+    renderTree();
+  });
+  $('treeCard').addEventListener('change', function (e) {
+    if (e.target.id !== 'treeOnlyOver') return;
+    treeOnlyOver = e.target.checked;
+    treeListOpen = true;
+    renderTree();
+  });
+  $('treeCard').addEventListener('toggle', function (e) {
+    if (e.target.classList && e.target.classList.contains('tree-all')) treeListOpen = !!e.target.open;
+  }, true);
 
   function saveState() {
     try {
@@ -593,7 +1000,7 @@
   function init() {
     var st = null; try { st = JSON.parse(localStorage.getItem(LS_STATE) || 'null'); } catch (e) {}
     if (st && st.cfg) {
-      ['mode', 'hard', 'ansOnly', 'max', 'top', 'notation', 'valid', 'layer', 'guessMode', 'page', 'guarantee', 'steps', 'stepsTouched'].forEach(function (k) {
+        ['mode', 'hard', 'ansOnly', 'max', 'top', 'notation', 'valid', 'layer', 'guessMode', 'page', 'guarantee', 'steps', 'stepsTouched', 'treePolicy'].forEach(function (k) {
         if (st.cfg[k] !== undefined) cfg[k] = st.cfg[k];
       });
       if (!st.cfg.guessMode) cfg.guessMode = inferGuessMode();
