@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wordle-style Solver · Geekahedron</title>
+<meta name="description" content="A generic, customizable Wordle-style solver: any word list, any length, hard mode, average-case or guaranteed-solve scoring, and Wordlebot-style pattern breakdowns.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="../../">Geekahedron</a>
+  <h1>Wordle-style Solver</h1>
+  <p class="sub">Any word list, any length. Enter your clues, pick how to score, and see what each next guess would leave.</p>
+</header>
+
+<main>
+  <!-- SETUP -->
+  <details class="card" id="setupCard">
+    <summary><h2>Game setup <span class="pill" id="packSummary">loading…</span></h2></summary>
+    <div class="grid2">
+      <label>Preset / pack
+        <select id="packSel"></select>
+      </label>
+      <div class="row-btns">
+        <button type="button" id="savePackBtn" class="ghost">Save as custom pack</button>
+        <button type="button" id="delPackBtn" class="ghost">Delete saved pack</button>
+      </div>
+    </div>
+    <div class="grid3">
+      <label>Word length <input type="number" id="cfgL" min="1" max="20" value="5"></label>
+      <label>Alphabet <small>(blank = any)</small> <input type="text" id="cfgAlpha" value="abcdefghijklmnopqrstuvwxyz" spellcheck="false"></label>
+      <label>Duplicate-letter rule
+        <select id="cfgRule">
+          <option value="wordle">Wordle standard (extra copies gray)</option>
+          <option value="simple">Simple (any present letter = yellow)</option>
+        </select>
+      </label>
+      <label class="chk"><input type="checkbox" id="cfgCI" checked> Case-insensitive (normalize to lowercase)</label>
+      <label class="chk"><input type="checkbox" id="cfgTok"> Entries are space/comma-separated tokens <small>(e.g. cards "AS KH 10D")</small></label>
+      <label>Valid guesses
+        <select id="cfgValid">
+          <option value="answers">Answer list only</option>
+          <option value="both" selected>Answers + guess list</option>
+          <option value="any">Any string of this length/alphabet</option>
+        </select>
+      </label>
+    </div>
+    <div class="grid2">
+      <label>Answer list (possible solutions) — one per line
+        <textarea id="ansText" rows="6" spellcheck="false" placeholder="crane&#10;slate&#10;…"></textarea>
+        <span class="filebtn">Upload .txt <input type="file" id="ansFile" accept=".txt,.csv,text/plain"></span>
+      </label>
+      <label>Extra guess list (optional, allowed but never answers)
+        <textarea id="guessText" rows="6" spellcheck="false" placeholder="optional"></textarea>
+        <span class="filebtn">Upload .txt <input type="file" id="guessFile" accept=".txt,.csv,text/plain"></span>
+      </label>
+    </div>
+    <div class="row-btns">
+      <button type="button" id="applyBtn">Apply setup</button>
+      <span id="packMsg" class="muted"></span>
+    </div>
+  </details>
+
+  <!-- CLUES -->
+  <section class="card">
+    <h2>Clues so far</h2>
+    <div class="clue-entry">
+      <input type="text" id="clueGuess" placeholder="guess (e.g. slate)" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <input type="text" id="cluePat" placeholder="result (e.g. bgybb / rgyrr / 🟩🟨⬛)" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <button type="button" id="addClueBtn">Add</button>
+    </div>
+    <div class="tiles-preview" id="cluePreview" title="Tap a tile to cycle gray → yellow → green"></div>
+    <p class="muted small">Result codes: green <b>G</b>/2/c/🟩 · yellow <b>Y</b>/1/p/o/🟨 · gray <b>B</b>/R/X/W/0/-/.&nbsp;/⬛/⬜. Or type the guess and tap tiles.</p>
+    <div id="clueList"></div>
+    <div class="row-btns"><button type="button" id="undoBtn" class="ghost">Undo last</button><button type="button" id="clearBtn" class="ghost">Clear all</button></div>
+  </section>
+
+  <!-- REMAINING -->
+  <section class="card">
+    <h2>Remaining answers: <span id="remCount" class="big">–</span></h2>
+    <details id="remDetails"><summary>Show list</summary><div id="remList" class="wordlist"></div></details>
+  </section>
+
+  <!-- SUGGESTIONS -->
+  <section class="card">
+    <h2>Suggested next guesses</h2>
+    <div class="grid3">
+      <label>Scoring
+        <select id="cfgMode">
+          <option value="avg">Fewest expected remaining (average case)</option>
+          <option value="entropy">Most information (entropy, bits)</option>
+          <option value="minimax">Smallest worst case (guaranteed / minimax)</option>
+          <option value="splits">Most distinct patterns (splits)</option>
+        </select>
+      </label>
+      <label>Hard mode
+        <select id="cfgHard">
+          <option value="off">Off</option>
+          <option value="wordle">Wordle hard (reuse greens &amp; yellows)</option>
+          <option value="strict">Strict (guess must fit all clues)</option>
+        </select>
+      </label>
+      <label class="chk"><input type="checkbox" id="cfgAnsOnly"> Only suggest guesses that could still be the answer</label>
+      <label>Max guesses to score <input type="number" id="cfgMax" min="50" max="100000" step="50" value="12000"></label>
+      <label>Show top <input type="number" id="cfgTop" min="1" max="200" value="15"></label>
+      <label>Pattern display
+        <select id="cfgNotation">
+          <option value="GYB">G / Y / B</option>
+          <option value="gyr">g / y / r (r = gray)</option>
+          <option value="210">2 / 1 / 0</option>
+          <option value="emoji">🟩 🟨 ⬛</option>
+        </select>
+      </label>
+    </div>
+    <div id="scoreStatus" class="muted small"></div>
+    <div class="tablewrap">
+      <table id="sugTable" class="data">
+        <thead><tr><th>#</th><th>Guess</th><th title="Average number of answers left after this guess (0 if it is the answer)">Exp. left</th><th title="Largest group of answers that could be left">Worst</th><th title="Number of distinct result patterns">Patterns</th><th title="Expected information, bits">Bits</th><th title="Could be the answer">Ans?</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p class="muted small">Tap a row to see its full breakdown below.</p>
+  </section>
+
+  <!-- BREAKDOWN -->
+  <section class="card" id="bdCard">
+    <h2>Breakdown <span id="bdTitle" class="muted"></span></h2>
+    <div class="clue-entry">
+      <input type="text" id="bdGuess" placeholder="analyze any guess…" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <button type="button" id="bdBtn">Analyze</button>
+      <input type="text" id="bdFilter" placeholder="filter by result (e.g. rgyrr)" autocomplete="off" autocapitalize="off" spellcheck="false">
+    </div>
+    <div id="bdSummary" class="muted small"></div>
+    <div id="bdRows"></div>
+  </section>
+</main>
+
+<footer class="foot">
+  <p>Runs entirely in your browser — nothing is uploaded. Built-in English packs: ENABLE word list (public domain); answer subsets chosen by word frequency. See <a href="README.txt">README</a>.</p>
+</footer>
+<script src="core.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

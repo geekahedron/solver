@@ -1,0 +1,22 @@
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Later build output
+dist/
+
+# Archives and dependencies
+*.tgz
+node_modules/
+
+# Local smoke-test artifacts
+shot-*.png
+*.log
