@@ -1,4 +1,6 @@
-const puppeteer = require('/workspace/dst-map/node_modules/puppeteer-core');
+let puppeteer;
+try { puppeteer = require('/workspace/dst-map/node_modules/puppeteer-core'); }
+catch (e) { puppeteer = require('puppeteer-core'); }
 (async () => {
   const b = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', args: ['--no-sandbox'], headless: 'new' });
   const p = await b.newPage(); const errs=[];

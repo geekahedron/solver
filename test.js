@@ -1,4 +1,9 @@
-const puppeteer = require('/workspace/dst-map/node_modules/puppeteer-core');
+const fs = require('fs');
+let puppeteer;
+try { puppeteer = require('/workspace/dst-map/node_modules/puppeteer-core'); }
+catch (e) { puppeteer = require('puppeteer-core'); }
+const shotDir = process.env.SOLVER_SHOT_DIR || '/tmp/solver-shots';
+fs.mkdirSync(shotDir, { recursive: true });
 (async () => {
   const b = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', args: ['--no-sandbox'], headless: 'new' });
   const errs = [];
@@ -14,7 +19,7 @@ const puppeteer = require('/workspace/dst-map/node_modules/puppeteer-core');
     top: [...document.querySelectorAll('#sugTable tbody tr')].slice(0,5).map(r => [...r.cells].map(c=>c.textContent).join(' ')),
     bd: document.getElementById('bdSummary').textContent, rows: document.querySelectorAll('.bd-row').length }))));
   await out('open');
-  await p.screenshot({ path: '/workspace/solver/shot-open.png', fullPage: false });
+  await p.screenshot({ path: shotDir + '/shot-open.png', fullPage: false });
   for (const m of ['minimax','entropy','splits']) { await p.select('#cfgMode', m); await new Promise(s=>setTimeout(s,300)); await p.waitForFunction(() => /Scored/.test(document.getElementById('scoreStatus').textContent), { timeout: 60000 }); await out(m); }
   await p.select('#cfgMode','avg');
   await p.type('#clueGuess', 'slate'); await p.type('#cluePat', 'rgyrr'); await p.click('#addClueBtn');
@@ -24,12 +29,12 @@ const puppeteer = require('/workspace/dst-map/node_modules/puppeteer-core');
   await out('hard');
   await p.type('#bdFilter', 'bbbbb'); await new Promise(s=>setTimeout(s,200));
   await out('filter');
-  await p.screenshot({ path: '/workspace/solver/shot-clue.png', fullPage: true });
+  await p.screenshot({ path: shotDir + '/shot-clue.png', fullPage: true });
   const m = await b.newPage();
   await m.emulate({ viewport: { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true }, userAgent: 'Mozilla/5.0 (iPhone)' });
   await m.goto(base, { waitUntil: 'networkidle0' });
   await m.waitForFunction(() => /Scored/.test(document.getElementById('scoreStatus').textContent), { timeout: 60000 });
-  await m.screenshot({ path: '/workspace/solver/shot-mobile.png', fullPage: false });
+  await m.screenshot({ path: shotDir + '/shot-mobile.png', fullPage: false });
   console.log('errs', errs);
   await b.close();
 })();

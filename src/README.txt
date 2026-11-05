@@ -37,3 +37,12 @@ Performance: scoring costs |pool| x |remaining|. If the guess pool is larger tha
 plus the guesses with the best letter / position coverage of the remaining answers.
 Default 12,000 means the 5-letter pack is scored exhaustively.
 Single-step (greedy) scoring only — no full decision-tree search.
+
+Pack model
+----------
+Built-in English lengths are one GamePack: packs/wordle-en.json next to the
+word lists. It names the known answer list, the larger guess list, and Wordle
+feedback. Guess mode (any / dictionary / hard / answers only) and the solution
+layer (known / theoretical / known preferred) are toggles on that pack.
+docs/pack-format.md in the solver repo describes the JSON shape. A Mastermind
+file in packs/ is a sketch only.

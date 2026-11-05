@@ -34,10 +34,43 @@ The built-in English packs (4–8 letters) are **not** the New York Times Wordle
 | Path | Role |
 | --- | --- |
 | `src/index.html`, `src/style.css` | Page |
-| `src/core.js` | Feedback patterns and scoring |
+| `src/core.js` | Feedback patterns and scoring (shared with the worker) |
+| `src/pack.js` | GamePack parsing, clue alphabets, validators |
+| `src/engine.js` | Pools, history, guess modes, solution layers |
+| `src/renderers.js` | `tokenRenderer` / `clueRenderer` ids |
 | `src/worker.js` | Scoring off the UI thread |
 | `src/app.js` | Clues, packs, breakdown |
+| `src/packs/wordle-en.json` | English 4–8 pack (points at the list files) |
 | `src/packs/englishN-*.txt` | Built-in lists, N = 4..8 |
-| `test.js`, `t2.js` | Browser smoke scripts (Puppeteer) |
+| `src/packs/rules/wordle.js` | Optional validator script (the presets use the builtin) |
+| `docs/pack-format.md` | Pack JSON shape |
 
-`test.js` and `t2.js` expect the page on port 18432 and Puppeteer at `/workspace/dst-map/node_modules/puppeteer-core`.
+Deploy the files in `src/` as static assets (for example `public_html/tools/solver/`). No build step and no server.
+
+## Game pack
+
+One pack describes a game. The page then toggles how you play it:
+
+- **Guess mode** — `any`, `dictionary`, `hard` (the candidate must fit every clue), or `answersOnly`. Wordle hard (reuse greens and yellows) is a separate, weaker switch.
+- **Solution layer** — score **known** answers, the larger **theoretical** list (the dictionary, for English), or **known preferred** (known while any remain, otherwise theoretical). Scenario shows both lists.
+- **Page** — Scenario (remaining lists), Analysis (pattern partitions and scores), or both.
+
+The English presets are that one pack: `src/packs/wordle-en.json`, the ENABLE lists, and Wordle `consistent` / feedback. Custom paste and upload still build a pack in the browser. Dungleon, Purrdle, and Mastermind are not playable here; `src/packs/mastermind-sketch.json` only reserves the shape. Details are in [docs/pack-format.md](docs/pack-format.md).
+
+## Tests
+
+Engine and pack checks (Node, no browser):
+
+```bash
+node test/engine.test.js
+```
+
+Browser smoke tests expect this site on port 18432 and Chrome plus `puppeteer-core` (`npm install puppeteer-core`, or the older path `/workspace/dst-map/node_modules/puppeteer-core`):
+
+```bash
+python3 -m http.server 18432 --directory src
+node test.js
+node t2.js
+```
+
+Screenshots from those scripts go to `/tmp/solver-shots/` unless `SOLVER_SHOT_DIR` is set.

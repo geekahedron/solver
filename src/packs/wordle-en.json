@@ -1,0 +1,56 @@
+{
+  "id": "wordle-en",
+  "name": "English Wordle-style",
+  "note": "ENABLE word lists ranked with Norvig frequencies. Not the NYT Wordle lists.",
+  "delimiter": "none",
+  "caseInsensitive": true,
+  "clueShape": "perSlot",
+  "clueAlphabet": [
+    { "id": "absent", "value": 0, "label": "B", "symbols": ["b", "r", "x", "w", "0", "-", ".", "_"] },
+    { "id": "present", "value": 1, "label": "Y", "symbols": ["y", "p", "o", "1"] },
+    { "id": "correct", "value": 2, "label": "G", "symbols": ["g", "c", "2"] }
+  ],
+  "tokenRenderer": "tiles/letters",
+  "clueRenderer": "clues/wordle-gyb",
+  "feedback": "wordle",
+  "rules": "builtin:wordle",
+  "alphabet": "abcdefghijklmnopqrstuvwxyz",
+  "pools": { "theoretical": "guessList" },
+  "variants": [
+    {
+      "id": "wordle-en-4",
+      "name": "English 4-letter",
+      "length": 4,
+      "knownSolutions": "english4-answers.txt",
+      "guessList": "english4-guesses.txt"
+    },
+    {
+      "id": "wordle-en-5",
+      "name": "English 5-letter",
+      "length": 5,
+      "knownSolutions": "english5-answers.txt",
+      "guessList": "english5-guesses.txt"
+    },
+    {
+      "id": "wordle-en-6",
+      "name": "English 6-letter",
+      "length": 6,
+      "knownSolutions": "english6-answers.txt",
+      "guessList": "english6-guesses.txt"
+    },
+    {
+      "id": "wordle-en-7",
+      "name": "English 7-letter",
+      "length": 7,
+      "knownSolutions": "english7-answers.txt",
+      "guessList": "english7-guesses.txt"
+    },
+    {
+      "id": "wordle-en-8",
+      "name": "English 8-letter",
+      "length": 8,
+      "knownSolutions": "english8-answers.txt",
+      "guessList": "english8-guesses.txt"
+    }
+  ]
+}
