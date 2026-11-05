@@ -3,8 +3,9 @@ Geekahedron Wordle-style Solver  (https://geekahedron.com/tools/solver/)
 Pure client-side (HTML/CSS/JS, no backend, nothing uploaded). Files:
   index.html, style.css   page + styles
   core.js                 feedback/pattern + scoring engine (shared)
-  worker.js               Web Worker that runs scoring off the UI thread
-  app.js                  UI, clue entry, packs, breakdown
+  tree.js                 opener solve tree (one starting guess, then the policy)
+  worker.js               Web Worker that runs scoring and opener trees off the UI thread
+  app.js                  UI, clue entry, packs, breakdown, tree page
   packs/englishN-*.txt    built-in English packs, N = 4..8
 
 Word lists / attribution
@@ -71,6 +72,32 @@ half the budget) plus the guesses with the best letter / position coverage of
 the remaining answers. Default 12,000 means the 5-letter pack's one-ply pass is
 exhaustive. That same cap limits which openers the steps beam can deepen.
 The Max steps search is capped separately.
+
+Opener solve tree (Tree page)
+-----------------------------
+Fixes one starting guess and expands the decision tree on the answers still
+possible. Each pattern shows the next guess and the remaining words, in the
+same shape as Jonathan Olson's solver
+(https://jonathanolson.net/wordle-solver/). It is not his precomputed NYT tree.
+
+Differences from Olson:
+* Built-in lists are ENABLE subsets, not the NYT Wordle list. SALET and SOARE
+  are not in them. TARPS is on the guess list. CRAMP is an answer here.
+* Uniform answer weights. No frequency prior.
+* Built in the browser for the active list, guess mode, solution layer, and
+  hard-mode rules. n starts at 6 minus clues already entered.
+* "Guaranteed" is fail-closed: every answer played out within n, and every
+  later guess chosen by a full search. A shortlist line that finishes within n
+  is a real strategy and is labeled as such, without that stronger claim.
+* Hard mode on a long list picks later guesses from a letter-coverage
+  shortlist. Depths are exact for the guesses actually played. Answers over n
+  broke this strategy; a different continuation might still fit, and the page
+  does not treat that as proved. A branch cut off by the time limit is unproved.
+* The Analysis guarantee checkbox is unchanged. It still refuses a guess when
+  a full line was not proved. Tree does not rank every opener.
+
+Policies: worst-case depth, or fewest expected steps. The summary shows max
+depth, how many answers exceed n, and the average for this fixed opener.
 
 Pack model
 ----------

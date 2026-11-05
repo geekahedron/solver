@@ -35,6 +35,7 @@ The built-in English packs (4–8 letters) are **not** the New York Times Wordle
 | --- | --- |
 | `src/index.html`, `src/style.css` | Page |
 | `src/core.js` | Feedback patterns and scoring (shared with the worker) |
+| `src/tree.js` | Opener solve tree (one starting guess, then the whole policy) |
 | `src/pack.js` | GamePack parsing, clue alphabets, validators |
 | `src/engine.js` | Pools, history, guess modes, solution layers |
 | `src/renderers.js` | `tokenRenderer` / `clueRenderer` ids |
@@ -53,7 +54,7 @@ One pack describes a game. The page then toggles how you play it:
 
 - **Guess mode** — `any`, `dictionary`, `hard` (the candidate must fit every clue), or `answersOnly`. Wordle hard (reuse greens and yellows) is a separate, weaker switch.
 - **Solution layer** — score **known** answers, the larger **theoretical** list (the dictionary, for English), or **known preferred** (known while any remain, otherwise theoretical). Scenario shows both lists.
-- **Page** — Scenario (remaining lists), Analysis (pattern partitions and scores), or both.
+- **Page** — Scenario (remaining lists), Analysis (pattern partitions and scores), Tree (one opener’s solve tree), or both.
 - **Guarantee** — on Analysis, keep only guesses that can be proved to finish every remaining answer in at most n further guesses (default 6 minus clues entered), under the same guess mode and hard-mode rules on every later step. Max steps is that multi-ply worst case. The one-ply Worst column is unchanged. When scoring is fewest expected steps, survivors stay ordered by that average.
 
 The English presets are that one pack: `src/packs/wordle-en.json`, the ENABLE lists, and Wordle `consistent` / feedback. Custom paste and upload still build a pack in the browser. Dungleon, Purrdle, and Mastermind are not playable here; `src/packs/mastermind-sketch.json` only reserves the shape. Details are in [docs/pack-format.md](docs/pack-format.md).
@@ -68,6 +69,20 @@ Openings are not that tree. Exact through 5 answers (at most 64 guesses tried at
 
 These lists are not the New York Times Wordle lists, and the prior is uniform, so an English opening will not match Wordlebot’s published average.
 
+## Opener solve tree
+
+The **Tree** page fixes one starting guess (SLATE, TARPS, CRANE, or anything you type) and expands a decision tree on the answers still possible. Each feedback pattern shows the policy’s next guess and the words left in that branch. That is the same shape as [Jonathan Olson’s solver](https://jonathanolson.net/wordle-solver/): opener, coloring, next guess. It is not his precomputed NYT Wordle tree.
+
+- The built-in packs are ENABLE subsets, not the New York Times list. SALET and SOARE are not in them. TARPS is on the guess list. CRAMP is on the answer list.
+- Answers are equally likely. There is no frequency prior.
+- The tree uses the active guess mode, solution layer, and hard-mode rules on every later guess. Clues already entered shrink the list. **n** starts at 6 minus clues entered.
+- Depth is how many guesses this strategy plays, including the opener. Answers over **n** are listed with the pattern that trapped them. You can walk pattern → next guess.
+- **Guaranteed** means every answer was played to a depth ≤ n and every later guess was an exhaustive choice. A shortlist strategy that happens to finish within n is reported as a real strategy, and it is not given that stronger label.
+- On a long list, sets of up to 8 answers are searched in full when the legal guess list fits in the cap. Hard mode on the full English list picks later guesses from a letter-coverage shortlist, so the tree is marked approximate. Answers over n broke **this** strategy. A different continuation might still fit, and the page does not claim otherwise. Branches cut off by the time limit stay unproved.
+- The Analysis guarantee checkbox is unchanged. It still fails closed when it cannot prove a line. Ranking every opener for a hard-mode guarantee at full size stays out of the browser. Tree is the view for one opener you already chose.
+
+The two policies are worst-case depth and fewest expected steps. Both report the average and the maximum for the tree they actually play.
+
 ## Tests
 
 Engine and pack checks (Node, no browser):
@@ -75,6 +90,7 @@ Engine and pack checks (Node, no browser):
 ```bash
 node test/engine.test.js
 node test/guarantee.test.js
+node test/tree.test.js
 ```
 
 Browser smoke tests expect this site on port 18432 and Chrome plus `puppeteer-core` (`npm install puppeteer-core`, or the older path `/workspace/dst-map/node_modules/puppeteer-core`):
