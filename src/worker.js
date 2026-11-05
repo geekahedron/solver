@@ -17,7 +17,13 @@ self.onmessage = function (e) {
         self.postMessage({ type: 'progress', id: d.id, done: done, total: total, phase: 'steps' });
       }
     });
+    d.stepsAttached = true;
   }
-  var top = SolverCore.rank(scores, d.mode, d.topN);
-  self.postMessage({ type: 'result', id: d.id, top: top, scored: scores.length, ms: Date.now() - t0 });
+  var finished = SolverCore.finishScores(scores, d, function (done, total) {
+    self.postMessage({ type: 'progress', id: d.id, done: done, total: total, phase: 'depth' });
+  });
+  self.postMessage({
+    type: 'result', id: d.id, top: finished.top, scored: scores.length,
+    ms: Date.now() - t0, depth: finished.depth
+  });
 };
