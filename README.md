@@ -80,6 +80,7 @@ The **Tree** page fixes one starting guess (SLATE, TARPS, CRANE, or anything you
 - **Guaranteed** means every answer was played to a depth ≤ n and every later guess was an exhaustive choice. A shortlist strategy that happens to finish within n is reported as a real strategy, and it is not given that stronger label.
 - On a long list, sets of up to 8 answers are searched in full when the legal guess list fits in the cap. Hard mode on the full English list picks later guesses from a letter-coverage shortlist, so the tree is marked approximate. Answers over n broke **this** strategy. A different continuation might still fit, and the page does not claim otherwise. Branches cut off by the time limit stay unproved.
 - The Analysis guarantee checkbox is unchanged. It still fails closed when it cannot prove a line. Ranking every opener for a hard-mode guarantee at full size stays out of the browser. Tree is the view for one opener you already chose.
+- **Scan openers** walks the quick picks in order (SLATE, TARPS, CRANE, CRAMP, TRACE, STARE, CRATE, RAISE, ALERT, LATER, skipping any that are not in the loaded pack). It builds the same tree as Build tree and stops at the first starter whose played strategy has max depth ≤ n (`summary.strategyFits`). A shortlist line that fits still counts; the scan does not wait for the stronger guaranteed flag. When 16 or fewer answers remain, it continues with those answers, then other dictionary guesses, then answers already ruled out, up to 40 more. A new scan or Build tree cancels the one in progress. A click while the pack is still loading waits, the same way Build tree does.
 
 The two policies are worst-case depth and fewest expected steps. Both report the average and the maximum for the tree they actually play.
 
@@ -102,6 +103,9 @@ Browser smoke tests expect this site on port 18432 and Chrome plus `puppeteer-co
 python3 -m http.server 18432 --directory src
 node test.js
 node t2.js
+node test/scan-ui.js
 ```
+
+`test/scan-ui.js` checks Scan openers: quick-pick order, stopping on the first fit, exhaustion, a Wordle-hard probe, cancel, and a click that waits for the pack to load.
 
 Screenshots from those scripts go to `/tmp/solver-shots/` unless `SOLVER_SHOT_DIR` is set.

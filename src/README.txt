@@ -95,6 +95,12 @@ Differences from Olson:
   does not treat that as proved. A branch cut off by the time limit is unproved.
 * The Analysis guarantee checkbox is unchanged. It still refuses a guess when
   a full line was not proved. Tree does not rank every opener.
+* Scan openers tries the quick picks in the order shown (SLATE through LATER,
+  skipping any missing from the pack) and stops at the first played strategy
+  with max depth ≤ n. That is strategyFits, not the stronger guaranteed flag.
+  With 16 or fewer answers left it also tries those answers, then other
+  dictionary guesses, then ruled-out answers, up to 40 more. Build tree or a
+  new scan cancels it. A click before the pack has loaded waits for the list.
 
 Policies: worst-case depth, or fewest expected steps. The summary shows max
 depth, how many answers exceed n, and the average for this fixed opener.

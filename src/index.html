@@ -171,7 +171,7 @@
 
   <section class="card" id="treeCard">
     <h2>Opener solve tree</h2>
-    <p class="muted small">Pick a starting guess and expand its decision tree on the answers still possible. After the opener, each result shows the next guess and the words that remain — the same shape as <a href="https://jonathanolson.net/wordle-solver/">Jonathan Olson’s solver</a>. This tree is built in the browser for the list you have loaded. It is not his precomputed NYT Wordle tree: the built-in packs are ENABLE subsets (SALET and SOARE are not in them; TARPS is on the guess list), every answer is equally likely, and a long hard-mode list is too big for an exhaustive proof. The guarantee checkbox is unchanged and still fail-closed. Here one concrete strategy is played instead. Later guesses use the active guess mode and hard-mode rules. <b>n</b> is further guesses from here, starting at 6 minus clues already entered.</p>
+    <p class="muted small">Pick a starting guess and expand its decision tree on the answers still possible. After the opener, each result shows the next guess and the words that remain — the same shape as <a href="https://jonathanolson.net/wordle-solver/">Jonathan Olson’s solver</a>. This tree is built in the browser for the list you have loaded. It is not his precomputed NYT Wordle tree: the built-in packs are ENABLE subsets (SALET and SOARE are not in them; TARPS is on the guess list), every answer is equally likely, and a long hard-mode list is too big for an exhaustive proof. The guarantee checkbox is unchanged and still fail-closed. Here one concrete strategy is played instead. Later guesses use the active guess mode and hard-mode rules. <b>n</b> is further guesses from here, starting at 6 minus clues already entered. <b>Scan openers</b> tries starters in order until one of those strategies finishes within n.</p>
     <div class="opener-picks" id="treePicks"></div>
     <div class="grid3">
       <label>Starting guess
@@ -213,8 +213,10 @@
     <p class="muted small">Guess mode, hard mode, and the solution layer are the same settings as Analysis. Wordle hard reuses greens and yellows on every later guess in the tree.</p>
     <div class="row-btns">
       <button type="button" id="treeBuild">Build tree</button>
-      <span id="treeStatus" class="muted small"></span>
+      <button type="button" id="treeScan" class="ghost" aria-pressed="false">Scan openers</button>
+      <span id="treeStatus" class="muted small" role="status" aria-live="polite"></span>
     </div>
+    <p class="muted small" id="treeScanHelp">Scan openers tries each starter in order and stops at the first played strategy with max depth ≤ n. A shortlist line that finishes within n counts; the stronger “guaranteed” label is not required. Order: the quick picks in this pack, as shown above — SLATE, TARPS, CRANE, CRAMP, TRACE, STARE, CRATE, RAISE, ALERT, LATER — skipping any that are not loaded. When 16 or fewer answers remain, it continues with those answers, then other dictionary guesses, then answers already ruled out, up to 40 more. The scan uses this card’s hard mode, guess mode, solution layer, later-guess policy, budget n, and the clues already entered.</p>
     <p class="warn small" id="treeStale" hidden>Settings or clues changed. This tree is the previous one.</p>
     <div id="treeSummary"></div>
     <div id="treeFamilies"></div>

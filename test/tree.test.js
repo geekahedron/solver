@@ -327,6 +327,53 @@ check('steps policy on the trap still reports expected guesses', function () {
   assert.strictEqual(map.abw.depth, 5);
 });
 
+check('opener scan keeps quick-pick order and skips missing words', function () {
+  const openers = ['slate', 'tarps', 'crane', 'cramp', 'trace'];
+  const has = new Set(['crane', 'slate', 'later', 'aa', 'bb', 'zz']);
+  const plan = Core.planOpenerScan({
+    openers: openers,
+    has: function (w) { return has.has(w); },
+    remaining: ['crane', 'slate', 'aa', 'bb'],
+    dict: ['zz', 'crane'],
+    extraMaxRemaining: 16,
+    extraCap: 40
+  });
+  assert.deepStrictEqual(plan.picks, ['slate', 'crane']);
+  assert.deepStrictEqual(plan.extra, ['aa', 'bb', 'zz']);
+  assert.deepStrictEqual(plan.all, ['slate', 'crane', 'aa', 'bb', 'zz']);
+  assert.strictEqual(plan.continued, true);
+});
+
+check('opener scan does not walk the dictionary when the list is long', function () {
+  const words = [];
+  for (let i = 0; i < 17; i++) words.push('w' + i);
+  const plan = Core.planOpenerScan({
+    openers: ['slate', 'slate', 'missing', 'tarps'],
+    has: function (w) { return w === 'slate' || w === 'tarps' || w.indexOf('w') === 0; },
+    remaining: words,
+    dict: ['probe'],
+    extraMaxRemaining: 16,
+    extraCap: 40
+  });
+  assert.deepStrictEqual(plan.picks, ['slate', 'tarps']);
+  assert.deepStrictEqual(plan.extra, []);
+  assert.strictEqual(plan.continued, false);
+  assert.deepStrictEqual(plan.all, ['slate', 'tarps']);
+});
+
+check('opener scan caps the extra starters', function () {
+  const plan = Core.planOpenerScan({
+    openers: [],
+    has: function () { return true; },
+    remaining: ['aa'],
+    dict: ['bb', 'cc', 'dd', 'ee'],
+    extraMaxRemaining: 16,
+    extraCap: 3
+  });
+  assert.deepStrictEqual(plan.all, ['aa', 'bb', 'cc']);
+  assert.strictEqual(plan.continued, true);
+});
+
 try {
   console.log(passed + ' passed');
 } catch (err) {

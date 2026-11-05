@@ -16,6 +16,8 @@ body[data-page="tree"] #treeCard{display:block}
 body[data-page="tree"] #analysis,
 body[data-page="tree"] #scenarioCard{display:none}
 .opener-picks{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.opener-picks button.on{background:var(--orange);color:#1a0d00;border-color:var(--orange)}
+#treeStatus{flex:1 1 180px;min-width:12em}
 .tree-stats{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
 .tree-stats .stat{background:var(--navy);border-radius:8px;padding:8px 10px;min-width:6.5em}
 .tree-stats .stat b{display:block;font-size:18px;color:var(--orange)}

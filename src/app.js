@@ -37,8 +37,9 @@
   var lastTop = [], selectedKey = null, autoSel = true, bdFilterPat = null;
   var worker = null, reqId = 0, scoreTimer = null;
   var treeWorker = null, treeReq = 0, treeResult = null, treeSig = '', treePath = [], treeOnlyOver = false, treeListOpen = false;
-  var treeQueue = null, treeFlushToken = 0;
+  var treeQueue = null, treeFlushToken = 0, scanJob = null;
   var TREE_OPENERS = ['slate', 'tarps', 'crane', 'cramp', 'trace', 'stare', 'crate', 'raise', 'alert', 'later'];
+  var SCAN_EXTRA_MAX_REM = 16, SCAN_EXTRA_CAP = 40;
 
   function inferGuessMode() {
     if (cfg.ansOnly) return 'answersOnly';
@@ -679,8 +680,10 @@
   }
   function markTreeStale() {
     var el = $('treeStale');
-    if (!el) return;
-    el.hidden = !treeResult || treeSig === currentTreeSig();
+    if (el) el.hidden = !treeResult || treeSig === currentTreeSig();
+    if (scanJob && !snapStillCurrent(scanJob.snap)) {
+      stopScan('Scan stopped because the settings or clues changed.');
+    }
   }
   function fillTreeOpeners() {
     if (!$('treePicks') || !engine) return;
@@ -696,16 +699,41 @@
     var enc = cur ? engine.encode(cur) : null;
     if (!cur || (enc && enc.err)) $('treeOpener').value = have[0] || '';
   }
-  function dropTree() {
+  function haltTreeWork() {
     treeReq++;
-    if (treeWorker) { treeWorker.terminate(); treeWorker = null; }
+    if (treeWorker) {
+      treeWorker.onmessage = null;
+      treeWorker.onerror = null;
+      treeWorker.terminate();
+      treeWorker = null;
+    }
+  }
+  function dropTree() {
+    scanJob = null;
+    setScanRunning(false);
+    haltTreeWork();
     treeResult = null;
     treeSig = '';
     treePath = [];
     renderTree();
+    markActivePick('');
     var stale = $('treeStale');
     if (stale) stale.hidden = true;
     if ($('treeStatus') && !treeQueue) $('treeStatus').textContent = 'Choose a starting word and build its tree.';
+  }
+  function markActivePick(word) {
+    if (!$('treePicks')) return;
+    var want = (word || '').toLowerCase();
+    Array.prototype.forEach.call($('treePicks').querySelectorAll('[data-pick]'), function (b) {
+      b.classList.toggle('on', b.getAttribute('data-pick') === want);
+    });
+  }
+  function setScanRunning(on) {
+    var b = $('treeScan');
+    if (!b) return;
+    b.textContent = on ? 'Stop' : 'Scan openers';
+    b.classList.toggle('ghost', !on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
   }
   function treeNode() {
     var node = treeResult && treeResult.root;
@@ -898,7 +926,7 @@
     el.innerHTML = '<span class="warn">' + esc(msg) + '</span>';
   }
   function rememberTreeQueue() {
-    treeQueue = { opener: treeOpenerValue(), userEdited: false };
+    treeQueue = { kind: 'build', opener: treeOpenerValue(), userEdited: false };
   }
   function failQueuedPack() {
     if (!treeQueue) return;
@@ -918,6 +946,11 @@
   }
   function flushTreeQueue() {
     if (!treeQueue || !engine || packPhase !== 'ready') return;
+    if (treeQueue.kind === 'scan') {
+      treeQueue = null;
+      scanOpeners();
+      return;
+    }
     if (!TreeStatus.queueStillCurrent(treeQueue, treeOpenerValue())) {
       treeQueue = null;
       setTreeWarn(TreeStatus.openerChanged);
@@ -926,7 +959,162 @@
     treeQueue = null;
     runTree();
   }
+  function clueSigNow() {
+    return clues.map(function (c) { return c.key + ':' + c.pat; }).join(',');
+  }
+  function remHashNow() {
+    var h = 0, i;
+    for (i = 0; i < remaining.length; i++) h = (h * 33 + remaining[i]) | 0;
+    return h;
+  }
+  function readTreeBudget() {
+    var n = parseInt($('treeBudget').value, 10);
+    if (n) {
+      cfg.steps = Math.max(1, Math.min(30, n));
+      $('treeBudget').value = cfg.steps;
+      if ($('cfgSteps')) $('cfgSteps').value = cfg.steps;
+    }
+    cfg.treePolicy = ($('treePolicy') && $('treePolicy').value) || cfg.treePolicy || 'worst';
+  }
+  function takeTreeSnap() {
+    readTreeBudget();
+    return {
+      rem: Int32Array.from(remaining),
+      guessIdx: Int32Array.from(treeGuessIdx()),
+      clues: clues.map(function (c) {
+        return { ids: Array.prototype.slice.call(c.ids), pat: c.pat, digits: c.digits.slice() };
+      }),
+      hard: cfg.hard,
+      guessMode: cfg.guessMode,
+      layer: cfg.layer,
+      rule: cfg.rule,
+      valid: cfg.valid,
+      budget: cfg.steps,
+      policy: cfg.treePolicy,
+      clueSig: clueSigNow(),
+      remHash: remHashNow()
+    };
+  }
+  function snapStillCurrent(snap) {
+    return snap.hard === cfg.hard && snap.guessMode === cfg.guessMode && snap.layer === cfg.layer &&
+      snap.policy === cfg.treePolicy && snap.budget === cfg.steps && snap.rule === cfg.rule &&
+      snap.valid === cfg.valid && snap.clueSig === clueSigNow() &&
+      snap.remHash === remHashNow() && snap.rem.length === remaining.length;
+  }
+  function treeMessage(enc, snap, id) {
+    var idx = engine.keyIdx.has(enc.key) ? engine.keyIdx.get(enc.key) : -1;
+    return {
+      type: 'tree', id: id,
+      U: engine.U, L: cfg.L, K: engine.syms.length, rule: engine.feedbackRule,
+      rem: snap.rem, guessIdx: snap.guessIdx, clues: snap.clues,
+      hard: snap.hard, guessMode: snap.guessMode,
+      opener: idx, openerIds: Array.prototype.slice.call(enc.ids),
+      budget: snap.budget, policy: snap.policy,
+      limits: { timeCapMs: 12000 }
+    };
+  }
+  function openerScanPlan() {
+    var remWords = [], i;
+    for (i = 0; i < remaining.length; i++) remWords.push(engine.keys[remaining[i]]);
+    var dictWords = [];
+    if (remaining.length > 0 && remaining.length <= SCAN_EXTRA_MAX_REM) {
+      var remSet = {};
+      for (i = 0; i < remaining.length; i++) remSet[remaining[i]] = 1;
+      var probes = [], ruledOut = [], g = treeGuessIdx(), idx;
+      for (i = 0; i < g.length; i++) {
+        idx = g[i];
+        if (remSet[idx]) continue;
+        if (engine.flags[idx] && engine.flags[idx].known) ruledOut.push(engine.keys[idx]);
+        else probes.push(engine.keys[idx]);
+      }
+      dictWords = probes.concat(ruledOut);
+    }
+    return Core.planOpenerScan({
+      openers: TREE_OPENERS,
+      has: function (w) { return engine.keyIdx.has(w); },
+      remaining: remWords,
+      dict: dictWords,
+      extraMaxRemaining: SCAN_EXTRA_MAX_REM,
+      extraCap: SCAN_EXTRA_CAP
+    });
+  }
+  function dispatchTree(id, msg, onTree, onFail) {
+    var fellBack = false;
+    var workerErr = '';
+    function syncTree(fromWorker) {
+      if (fromWorker) workerErr = TreeStatus.errorText(fromWorker, 'Worker failed.');
+      if (fellBack || id !== treeReq) return;
+      fellBack = true;
+      if (treeWorker) {
+        treeWorker.onmessage = null;
+        treeWorker.onerror = null;
+        treeWorker.terminate();
+        treeWorker = null;
+      }
+      setTimeout(function () {
+        if (id !== treeReq) return;
+        try {
+          var t0 = Date.now();
+          var tree = Core.buildOpenerTree(msg, function (done, total) {
+            if (id !== treeReq) return;
+            var bar = $('treeBar');
+            if (bar) bar.style.width = (100 * done / Math.max(1, total)) + '%';
+          });
+          onTree(tree, Date.now() - t0);
+        } catch (err) {
+          onFail(TreeStatus.errorText(err, '') || workerErr || 'Tree build failed.');
+        }
+      }, 10);
+    }
+    if (treeWorker) {
+      treeWorker.onmessage = null;
+      treeWorker.onerror = null;
+      treeWorker.terminate();
+      treeWorker = null;
+    }
+    try {
+      if (location.protocol === 'file:') throw new Error('no worker on file://');
+      treeWorker = new Worker('worker.js');
+      treeWorker.onmessage = function (e) {
+        var d = e.data;
+        if (!d || d.id !== id || d.id !== treeReq) return;
+        try {
+          if (d.type === 'progress') {
+            var bar = $('treeBar');
+            if (bar) bar.style.width = (100 * d.done / Math.max(1, d.total)) + '%';
+            return;
+          }
+          if (d.type === 'error') {
+            syncTree(d.message || 'Worker failed.');
+            return;
+          }
+          if (d.type === 'tree') {
+            var w = treeWorker;
+            onTree(d.tree, d.ms);
+            if (treeWorker === w && treeWorker) {
+              treeWorker.onmessage = null;
+              treeWorker.onerror = null;
+              treeWorker.terminate();
+              treeWorker = null;
+            }
+          }
+        } catch (err) {
+          onFail(err);
+        }
+      };
+      treeWorker.onerror = function (ev) {
+        syncTree((ev && ev.message) || 'Worker failed.');
+        if (ev && ev.preventDefault) ev.preventDefault();
+      };
+      treeWorker.postMessage(msg);
+    } catch (err) { syncTree(err); }
+  }
   function runTree() {
+    if (scanJob) {
+      scanJob = null;
+      setScanRunning(false);
+      haltTreeWork();
+    }
     var raw = treeOpenerValue();
     var enc = null;
     var packReady = !!engine && packPhase !== 'loading';
@@ -953,31 +1141,12 @@
       return;
     }
     treeQueue = null;
-    var n, id, sig, idx, msg;
+    var id, sig, msg;
     try {
-      n = parseInt($('treeBudget').value, 10);
-      if (n) {
-        cfg.steps = Math.max(1, Math.min(30, n));
-        $('treeBudget').value = cfg.steps;
-        if ($('cfgSteps')) $('cfgSteps').value = cfg.steps;
-      }
-      cfg.treePolicy = $('treePolicy').value || 'worst';
+      var snap = takeTreeSnap();
       id = ++treeReq;
       sig = currentTreeSig();
-      idx = engine.keyIdx.has(enc.key) ? engine.keyIdx.get(enc.key) : -1;
-      msg = {
-        type: 'tree', id: id,
-        U: engine.U, L: cfg.L, K: engine.syms.length, rule: engine.feedbackRule,
-        rem: Int32Array.from(remaining),
-        guessIdx: Int32Array.from(treeGuessIdx()),
-        clues: clues.map(function (c) {
-          return { ids: Array.prototype.slice.call(c.ids), pat: c.pat, digits: c.digits.slice() };
-        }),
-        hard: cfg.hard, guessMode: cfg.guessMode,
-        opener: idx, openerIds: Array.prototype.slice.call(enc.ids),
-        budget: cfg.steps, policy: cfg.treePolicy,
-        limits: { timeCapMs: 12000 }
-      };
+      msg = treeMessage(enc, snap, id);
     } catch (err) {
       setTreeWarn(TreeStatus.errorText(err));
       return;
@@ -990,6 +1159,7 @@
       treeOnlyOver = false;
       treeListOpen = false;
       renderTree();
+      markActivePick(enc.key);
       var tail = 'Built in ' + ms + ' ms.';
       if (tree.summary.truncated) tail += ' Stopped at the time limit.';
       $('treeStatus').textContent = tail;
@@ -1007,71 +1177,181 @@
       setTreeWarn(TreeStatus.errorText(err));
     }
     $('treeStatus').innerHTML = 'Building tree for <b>' + esc(enc.key.toUpperCase()) + '</b>…<div class="bar"><i id="treeBar"></i></div>';
-    if (treeWorker) { treeWorker.terminate(); treeWorker = null; }
-    var fellBack = false;
-    var workerErr = '';
-    function syncTree(fromWorker) {
-      if (fromWorker) workerErr = TreeStatus.errorText(fromWorker, 'Worker failed.');
-      if (fellBack || id !== treeReq) return;
-      fellBack = true;
-      if (treeWorker) {
-        treeWorker.onmessage = null;
-        treeWorker.onerror = null;
-        treeWorker.terminate();
-        treeWorker = null;
-      }
-      setTimeout(function () {
-        if (id !== treeReq) return;
-        try {
-          var t0 = Date.now();
-          var tree = Core.buildOpenerTree(msg, function (done, total) {
-            if (id !== treeReq) return;
-            var bar = $('treeBar');
-            if (bar) bar.style.width = (100 * done / Math.max(1, total)) + '%';
-          });
-          show(tree, Date.now() - t0);
-        } catch (err) {
-          failTree(TreeStatus.errorText(err, '') || workerErr || 'Tree build failed.');
-        }
-      }, 10);
+    dispatchTree(id, msg, show, failTree);
+  }
+  function showFinishedTree(hit) {
+    $('treeOpener').value = hit.word;
+    markActivePick(hit.word);
+    treeResult = hit.tree;
+    treeSig = hit.sig;
+    treePath = [];
+    treeOnlyOver = false;
+    treeListOpen = false;
+    renderTree();
+    markTreeStale();
+  }
+  function stopScan(reason) {
+    var job = scanJob;
+    scanJob = null;
+    setScanRunning(false);
+    haltTreeWork();
+    if (!$('treeStatus')) return;
+    if (job && (job.best || job.last)) showFinishedTree(job.best || job.last);
+    else markActivePick(treeOpenerValue());
+    if (reason) {
+      $('treeStatus').textContent = reason;
+      return;
     }
-    try {
-      if (location.protocol === 'file:') throw new Error('no worker on file://');
-      treeWorker = new Worker('worker.js');
-      treeWorker.onmessage = function (e) {
-        var d = e.data;
-        if (!d || d.id !== id || d.id !== treeReq) return;
-        try {
-          if (d.type === 'progress') {
-            var bar = $('treeBar');
-            if (bar) bar.style.width = (100 * d.done / Math.max(1, d.total)) + '%';
-            return;
-          }
-          if (d.type === 'error') {
-            syncTree(d.message || 'Worker failed.');
-            return;
-          }
-          if (d.type === 'tree') {
-            show(d.tree, d.ms);
-            if (treeWorker) {
-              treeWorker.onmessage = null;
-              treeWorker.onerror = null;
-              treeWorker.terminate();
-              treeWorker = null;
-            }
-          }
-        } catch (err) {
-          failTree(err);
+    if (!job) {
+      $('treeStatus').textContent = 'Scan stopped.';
+      return;
+    }
+    var word = job.plan.all[job.i] || '';
+    var stopped;
+    if (!job.tried) stopped = 'Scan stopped during ' + word.toUpperCase() + ' (' + (job.i + 1) + '/' + job.plan.all.length + ').';
+    else stopped = 'Scan stopped after ' + job.tried + ' of ' + job.plan.all.length + '.';
+    if (job.best && job.best.summary.maxDepth != null) {
+      stopped += ' Best max depth so far was ' + job.best.summary.maxDepth + ' (' + job.best.word.toUpperCase() + ').';
+    }
+    $('treeStatus').textContent = stopped;
+  }
+  function finishScan(job) {
+    scanJob = null;
+    setScanRunning(false);
+    var show = job.best || job.last;
+    if (show) showFinishedTree(show);
+    var n = job.snap.budget;
+    var text;
+    if (!job.tried) text = 'None of the starters could be built under these settings.';
+    else text = 'None of the ' + job.tried + ' tried openers fit n=' + n + ' under these settings.';
+    if (job.best && job.best.summary.maxDepth != null) {
+      text += ' Best max depth was ' + job.best.summary.maxDepth + ' (' + job.best.word.toUpperCase() + ').';
+    } else if (job.tried) {
+      text += ' No opener played out every answer.';
+    }
+    if (job.cut) text += ' ' + job.cut + (job.cut === 1 ? ' was' : ' were') + ' cut off before every answer was solved.';
+    $('treeStatus').textContent = text;
+    saveState();
+  }
+  function showScanFit(hit) {
+    scanJob = null;
+    setScanRunning(false);
+    showFinishedTree(hit);
+    var s = hit.summary;
+    $('treeStatus').textContent = hit.word.toUpperCase() + ' fits n=' + s.budget + ' (max ' + s.maxDepth + ').';
+    saveState();
+  }
+  function stepScan() {
+    var job = scanJob;
+    if (!job) return;
+    if (!snapStillCurrent(job.snap)) {
+      stopScan('Scan stopped because the settings or clues changed.');
+      return;
+    }
+    if (job.i >= job.plan.all.length) {
+      finishScan(job);
+      return;
+    }
+    var word = job.plan.all[job.i];
+    var enc = engine.encode(word);
+    if (!enc || enc.err) {
+      job.i++;
+      stepScan();
+      return;
+    }
+    $('treeOpener').value = enc.key;
+    markActivePick(enc.key);
+    var id = ++treeReq;
+    var sig = currentTreeSig();
+    var msg;
+    try { msg = treeMessage(enc, job.snap, id); }
+    catch (err) {
+      setTreeWarn(TreeStatus.errorText(err));
+      scanJob = null;
+      setScanRunning(false);
+      return;
+    }
+    $('treeStatus').innerHTML = 'Trying <b>' + esc(enc.key.toUpperCase()) + '</b>… ' +
+      (job.i + 1) + '/' + job.plan.all.length +
+      '<div class="bar"><i id="treeBar"></i></div>';
+    dispatchTree(id, msg, function (tree, ms) {
+      if (scanJob !== job || id !== treeReq) return;
+      if (!snapStillCurrent(job.snap)) {
+        stopScan('Scan stopped because the settings or clues changed.');
+        return;
+      }
+      job.tried++;
+      job.i++;
+      if (tree && tree.summary) {
+        var hit = { word: enc.key, tree: tree, sig: sig, summary: tree.summary };
+        job.last = hit;
+        if (tree.summary.truncated) job.cut++;
+        if (tree.summary.playedOut && tree.summary.maxDepth != null &&
+            (job.best == null || tree.summary.maxDepth < job.best.summary.maxDepth)) {
+          job.best = hit;
         }
-      };
-      treeWorker.onerror = function (ev) {
-        syncTree((ev && ev.message) || 'Worker failed.');
-        if (ev && ev.preventDefault) ev.preventDefault();
-      };
-      treeWorker.postMessage(msg);
-    } catch (err) { syncTree(err); }
+        if (tree.summary.strategyFits) {
+          showScanFit(hit);
+          return;
+        }
+      }
+      setTimeout(function () { if (scanJob === job) stepScan(); }, 0);
+    }, function (err) {
+      if (scanJob !== job || id !== treeReq) return;
+      setTreeWarn(TreeStatus.errorText(err));
+      scanJob = null;
+      setScanRunning(false);
+    });
+  }
+  function scanOpeners() {
+    if (scanJob) {
+      stopScan();
+      return;
+    }
+    var packReady = !!engine && packPhase !== 'loading';
+    if (!packReady) {
+      if (packPhase === 'failed') {
+        treeQueue = null;
+        setTreeWarn(TreeStatus.blockReason({ hasEngine: false, packPhase: 'failed', packError: packError }).message);
+        return;
+      }
+      treeQueue = { kind: 'scan', opener: treeOpenerValue(), userEdited: false };
+      setTreeWarn('Game setup is still loading. The scan will start when the pack is ready.');
+      return;
+    }
+    treeQueue = null;
+    if (!remaining.length) {
+      setTreeWarn('No answers left to build a tree on.');
+      return;
+    }
+    var plan = openerScanPlan();
+    if (!plan.all.length) {
+      var why = !plan.continued
+        ? 'None of the quick-pick starters are in this pack. ' + remaining.length + ' answers are left, so further openers are not scanned.'
+        : 'No starters to try on this list.';
+      $('treeStatus').textContent = why;
+      return;
+    }
+    var snap;
+    try { snap = takeTreeSnap(); }
+    catch (err) {
+      setTreeWarn(TreeStatus.errorText(err));
+      return;
+    }
+    haltTreeWork();
+    scanJob = { plan: plan, snap: snap, i: 0, tried: 0, cut: 0, best: null, last: null };
+    setScanRunning(true);
+    treeResult = null;
+    treeSig = '';
+    treePath = [];
+    renderTree();
+    var stale = $('treeStale');
+    if (stale) stale.hidden = true;
+    saveState();
+    stepScan();
   }
   $('treeBuild').addEventListener('click', runTree);
+  $('treeScan').addEventListener('click', scanOpeners);
   $('treeOpener').addEventListener('keydown', function (e) { if (e.key === 'Enter') runTree(); });
   $('treeOpener').addEventListener('input', function () {
     markTreeStale();
