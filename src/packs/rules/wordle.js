@@ -5,6 +5,10 @@
 // The host evaluates this file as a function body with `module` and `exports`.
 // ctx is the SolverEngine (structural, inLists, pattern, cluePattern, pack).
 
+// feedbackKind 'core' keeps Analysis on the built-in base-3 scorer.
+// A pack that implements its own marks sets feedbackKind to 'custom'.
+exports.feedbackKind = 'core';
+
 exports.validGuess = function (word, ctx) {
   return ctx.structural(word) && ctx.inLists(word);
 };

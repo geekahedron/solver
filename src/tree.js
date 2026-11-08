@@ -65,11 +65,11 @@
     var hard = spec.hard || 'off';
     var guessMode = spec.guessMode || 'dictionary';
     var strict = guessMode === 'hard' || hard === 'strict';
-    var pow3 = Core.pow3(L);
+    var marks = Core.bindMarks(L, K, rule, spec.hooks);
+    var pow3 = marks.pow;
     var counts = new Int16Array((K || 1) + 2);
-    var allGreen = 0;
+    var allGreen = marks.allGreen;
     var i;
-    for (i = 0; i < L; i++) allGreen += 2 * pow3[i];
 
     var rem = uniqSorted(spec.rem || []);
     var guessIdx = uniqSorted(spec.guessIdx || []);
@@ -105,7 +105,7 @@
         else {
           digits = new Array(L);
           p = cl.pat | 0;
-          for (j = 0; j < L; j++) { digits[j] = p % 3; p = (p / 3) | 0; }
+          for (j = 0; j < L; j++) { digits[j] = p % marks.base; p = (p / marks.base) | 0; }
         }
         out.push({ ids: ids, pat: cl.pat | 0, digits: digits });
       }
@@ -150,7 +150,7 @@
       if (hard !== 'wordle' && !strict) return clues;
       digits = new Array(L);
       p = pat;
-      for (d = 0; d < L; d++) { digits[d] = p % 3; p = (p / 3) | 0; }
+      for (d = 0; d < L; d++) { digits[d] = p % marks.base; p = (p / marks.base) | 0; }
       next = clues.slice();
       next.push({ ids: ids, pat: pat, digits: digits });
       return next;
@@ -164,8 +164,8 @@
         needSym = [];
         needN = [];
         for (i = 0; i < L; i++) {
-          if (cl.digits[i] === 2 && U[base + i] !== cl.ids[i]) return false;
-          if (cl.digits[i] > 0) {
+          if (marks.isCorrect(cl.digits[i]) && U[base + i] !== cl.ids[i]) return false;
+          if (marks.isRevealed(cl.digits[i])) {
             s = cl.ids[i];
             found = -1;
             for (k = 0; k < needSym.length; k++) if (needSym[k] === s) { found = k; break; }
@@ -186,7 +186,7 @@
       var ao = idx * L;
       var c;
       for (c = 0; c < clues.length; c++) {
-        if (Core.feedback(clues[c].ids, 0, U, ao, L, rule, counts, pow3) !== clues[c].pat) return false;
+        if (marks.pat(clues[c].ids, 0, U, ao, L, rule, counts, pow3) !== clues[c].pat) return false;
       }
       return true;
     }
@@ -332,7 +332,7 @@
       var buckets = [];
       var r, pat, b;
       for (r = 0; r < set.length; r++) {
-        pat = Core.feedback(ids, 0, U, set[r] * L, L, rule, counts, pow3);
+        pat = marks.pat(ids, 0, U, set[r] * L, L, rule, counts, pow3);
         b = map.get(pat);
         if (!b) {
           b = { pat: pat, members: [] };

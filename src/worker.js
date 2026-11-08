@@ -1,7 +1,22 @@
 /* Web Worker: scores candidate guesses, and builds opener trees, off the UI thread. */
-importScripts('core.js', 'tree.js');
+importScripts('core.js', 'pack.js', 'tree.js');
+
+function scoringHooks(d) {
+  if (!d || !d.feedbackSource) return null;
+  var rules = SolverPack.evalRules(d.feedbackSource);
+  return SolverPack.hooksFromRules(rules, {
+    base: d.clueBase,
+    greenDigit: d.greenDigit,
+    syms: d.syms || [],
+    correctValues: d.correctValues,
+    revealedValues: d.revealedValues
+  });
+}
+
 self.onmessage = function (e) {
   var d = e.data;
+  var hooks = scoringHooks(d);
+  if (hooks) d.hooks = hooks;
   if (d.type === 'tree') {
     var tTree = Date.now();
     try {
@@ -21,7 +36,7 @@ self.onmessage = function (e) {
   var t0 = Date.now();
   var scores = SolverCore.scorePool(d.U, d.L, d.K, d.rule, d.rem, d.pool, d.isCand, function (done, total) {
     self.postMessage({ type: 'progress', id: d.id, done: done, total: total, phase: 'ply' });
-  });
+  }, d.hooks);
   if (d.mode === 'steps') {
     var s = d.steps || {};
     SolverCore.attachExpectedSteps(scores, d.U, d.L, d.K, d.rule, d.rem, d.pool, {
@@ -29,6 +44,7 @@ self.onmessage = function (e) {
       hard: s.hard,
       dict: s.dict,
       clues: s.clues || [],
+      hooks: d.hooks,
       onProgress: function (done, total) {
         self.postMessage({ type: 'progress', id: d.id, done: done, total: total, phase: 'steps' });
       }

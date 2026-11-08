@@ -41,14 +41,53 @@
 
   Core.pow3 = function (L) { var p = []; for (var i = 0, v = 1; i < L; i++, v *= 3) p.push(v); return p; };
 
+  // Optional hooks select a pack script's feedback and a clue radix other than 3.
+  // With hooks omitted, pat passes through to Core.feedback and the radix stays 3
+  // (digit 0 gray, 1 yellow, 2 green). pat's extra arguments match Core.feedback
+  // so call sites can swap the function without changing the Wordle arguments.
+  Core.bindMarks = function (L, K, rule, hooks) {
+    var custom = hooks && hooks.pat;
+    var base = hooks && hooks.base ? hooks.base : 3;
+    var greenDigit = hooks && hooks.greenDigit != null ? hooks.greenDigit : 2;
+    var pow = base === 3 ? Core.pow3(L) : (function () {
+      var p = [], i, v;
+      for (i = 0, v = 1; i < L; i++, v *= base) p.push(v);
+      return p;
+    })();
+    var counts = new Int16Array((K || 0) + 2);
+    var allGreen = 0, i;
+    for (i = 0; i < L; i++) allGreen += greenDigit * pow[i];
+    function pat(g, go, a, ao, L2, rule2, counts2, pow2) {
+      if (custom) return custom(g, go, a, ao, L);
+      return Core.feedback(g, go, a, ao, L2, rule2, counts2, pow2);
+    }
+    function isCorrect(digit) {
+      if (hooks && hooks.correct) return !!hooks.correct(digit);
+      return digit === 2;
+    }
+    function isRevealed(digit) {
+      if (hooks && hooks.revealed) return !!hooks.revealed(digit);
+      return digit > 0;
+    }
+    return {
+      base: base,
+      pow: pow,
+      counts: counts,
+      allGreen: allGreen,
+      pat: pat,
+      isCorrect: isCorrect,
+      isRevealed: isRevealed
+    };
+  };
+
   // Score a pool of guesses against remaining answers.
   // U: flat Uint16Array universe, L, K (#symbols), rule, rem: Int32Array of universe idx (answers still possible),
   // pool: Int32Array of universe idx (guesses to score), isCand: Uint8Array over universe (1 = remaining answer)
-  Core.scorePool = function (U, L, K, rule, rem, pool, isCand, onProgress) {
-    var pow3 = Core.pow3(L), n = rem.length, allGreen = 0, i;
-    for (i = 0; i < L; i++) allGreen += 2 * pow3[i];
-    var counts = new Int16Array(K + 2);
-    var space = Math.pow(3, L);
+  Core.scorePool = function (U, L, K, rule, rem, pool, isCand, onProgress, hooks) {
+    var marks = Core.bindMarks(L, K, rule, hooks);
+    var pow3 = marks.pow, n = rem.length, allGreen = marks.allGreen;
+    var counts = marks.counts;
+    var space = Math.pow(marks.base, L);
     var useArr = space <= 2000000;
     var bucket = useArr ? new Int32Array(space) : null;
     var touched = new Int32Array(n);
@@ -56,7 +95,7 @@
     for (var p = 0; p < pool.length; p++) {
       var gi = pool[p], go = gi * L, nt = 0, map = useArr ? null : new Map();
       for (var r = 0; r < n; r++) {
-        var pat = Core.feedback(U, go, U, rem[r] * L, L, rule, counts, pow3);
+        var pat = marks.pat(U, go, U, rem[r] * L, L, rule, counts, pow3);
         if (useArr) { if (bucket[pat]++ === 0) touched[nt++] = pat; }
         else { var c = map.get(pat); if (c === undefined) { map.set(pat, 1); touched[nt++] = pat; } else map.set(pat, c + 1); }
       }
@@ -123,11 +162,11 @@
     var limits = stepsLimit(opts);
     var guessMode = opts.guessMode || 'dictionary';
     var hard = opts.hard || 'off';
-    var pow3 = Core.pow3(L);
-    var counts = new Int16Array((K || 1) + 2);
-    var allGreen = 0;
+    var marks = Core.bindMarks(L, K, rule, opts.hooks);
+    var pow3 = marks.pow;
+    var counts = marks.counts;
+    var allGreen = marks.allGreen;
     var i;
-    for (i = 0; i < L; i++) allGreen += 2 * pow3[i];
     if (!scores || !scores.length || !rem || !rem.length) return scores;
 
     var remArr = [];
@@ -162,7 +201,7 @@
       if (!digits) {
         digits = [];
         p = c.pat;
-        for (var d = 0; d < L; d++) { digits.push(p % 3); p = (p / 3) | 0; }
+        for (var d = 0; d < L; d++) { digits.push(p % marks.base); p = (p / marks.base) | 0; }
       }
       return { ids: c.ids, pat: c.pat, digits: digits };
     }
@@ -189,7 +228,7 @@
       for (d = 0; d < L; d++) ids.push(U[base + d]);
       var digits = [];
       var p = pat;
-      for (d = 0; d < L; d++) { digits.push(p % 3); p = (p / 3) | 0; }
+      for (d = 0; d < L; d++) { digits.push(p % marks.base); p = (p / marks.base) | 0; }
       var next = clues.slice();
       next.push({ ids: ids, pat: pat, digits: digits });
       return next;
@@ -202,8 +241,8 @@
         var needSym = [];
         var needN = [];
         for (i = 0; i < L; i++) {
-          if (cl.digits[i] === 2 && U[base + i] !== cl.ids[i]) return false;
-          if (cl.digits[i] > 0) {
+          if (marks.isCorrect(cl.digits[i]) && U[base + i] !== cl.ids[i]) return false;
+          if (marks.isRevealed(cl.digits[i])) {
             s = cl.ids[i];
             found = -1;
             for (k = 0; k < needSym.length; k++) if (needSym[k] === s) { found = k; break; }
@@ -222,7 +261,7 @@
     function consistent(idx, clues) {
       var ao = idx * L;
       for (var c = 0; c < clues.length; c++) {
-        if (Core.feedback(clues[c].ids, 0, U, ao, L, rule, counts, pow3) !== clues[c].pat) return false;
+        if (marks.pat(clues[c].ids, 0, U, ao, L, rule, counts, pow3) !== clues[c].pat) return false;
       }
       return true;
     }
@@ -342,7 +381,7 @@
       var map = new Map();
       var buckets = [];
       for (var r = 0; r < n; r++) {
-        var pat = Core.feedback(U, go, U, set[r] * L, L, rule, counts, pow3);
+        var pat = marks.pat(U, go, U, set[r] * L, L, rule, counts, pow3);
         var b = map.get(pat);
         if (!b) {
           b = { pat: pat, members: [] };
@@ -383,8 +422,8 @@
         var go, p0, p1, g;
         for (g = 0; g < cands.length; g++) {
           go = cands[g] * L;
-          p0 = Core.feedback(U, go, U, set[0] * L, L, rule, counts, pow3);
-          p1 = Core.feedback(U, go, U, set[1] * L, L, rule, counts, pow3);
+          p0 = marks.pat(U, go, U, set[0] * L, L, rule, counts, pow3);
+          p1 = marks.pat(U, go, U, set[1] * L, L, rule, counts, pow3);
           if (p0 !== p1) { split = true; break; }
         }
         out = { v: split ? 2 : Infinity, approx: false };
@@ -406,8 +445,8 @@
         any = true;
         o1 = set[(i3 + 1) % 3];
         o2 = set[(i3 + 2) % 3];
-        p1 = Core.feedback(U, gi * L, U, o1 * L, L, rule, counts, pow3);
-        p2 = Core.feedback(U, gi * L, U, o2 * L, L, rule, counts, pow3);
+        p1 = marks.pat(U, gi * L, U, o1 * L, L, rule, counts, pow3);
+        p2 = marks.pat(U, gi * L, U, o2 * L, L, rule, counts, pow3);
         if (p1 !== p2) v = 5 / 3;
         else {
           e2 = solve2(o1 < o2 ? [o1, o2] : [o2, o1], childClues(clues, gi, p1));
@@ -423,9 +462,9 @@
           gi = cands[g];
           if (gi === set[0] || gi === set[1] || gi === set[2]) continue;
           var pats = [
-            Core.feedback(U, gi * L, U, set[0] * L, L, rule, counts, pow3),
-            Core.feedback(U, gi * L, U, set[1] * L, L, rule, counts, pow3),
-            Core.feedback(U, gi * L, U, set[2] * L, L, rule, counts, pow3)
+            marks.pat(U, gi * L, U, set[0] * L, L, rule, counts, pow3),
+            marks.pat(U, gi * L, U, set[1] * L, L, rule, counts, pow3),
+            marks.pat(U, gi * L, U, set[2] * L, L, rule, counts, pow3)
           ];
           var groups = new Map();
           for (var t = 0; t < 3; t++) {
@@ -659,10 +698,10 @@
   Core.prepareDepthSearch = function (spec) {
     var U = spec.U, L = spec.L, rule = spec.rule;
     var K = spec.K || 0;
-    var pow3 = Core.pow3(L);
+    var marks = Core.bindMarks(L, K, rule, spec.hooks);
+    var pow3 = marks.pow;
     var counts = new Int16Array((K || 8) + 2);
-    var allGreen = 0, i;
-    for (i = 0; i < L; i++) allGreen += 2 * pow3[i];
+    var allGreen = marks.allGreen, i;
     var rem0 = [];
     for (i = 0; i < spec.rem.length; i++) rem0.push(spec.rem[i] | 0);
     rem0.sort(function (a, b) { return a - b; });
@@ -697,7 +736,7 @@
         else {
           d = new Uint8Array(L);
           p = cl.pat | 0;
-          for (j = 0; j < L; j++) { d[j] = p % 3; p = Math.floor(p / 3); }
+          for (j = 0; j < L; j++) { d[j] = p % marks.base; p = Math.floor(p / marks.base); }
         }
         out.push({ ids: ids, pat: cl.pat | 0, digits: d });
       }
@@ -717,14 +756,14 @@
 
     function makeClue(gi, pat) {
       var digits = new Uint8Array(L), p = pat, j;
-      for (j = 0; j < L; j++) { digits[j] = p % 3; p = Math.floor(p / 3); }
+      for (j = 0; j < L; j++) { digits[j] = p % marks.base; p = Math.floor(p / marks.base); }
       return { ids: idsOf(gi), pat: pat, digits: digits };
     }
 
     function consistent(gi, clues) {
       var ao = gi * L, c;
       for (c = 0; c < clues.length; c++) {
-        if (Core.feedback(clues[c].ids, 0, U, ao, L, rule, counts, pow3) !== clues[c].pat) return false;
+        if (marks.pat(clues[c].ids, 0, U, ao, L, rule, counts, pow3) !== clues[c].pat) return false;
       }
       return true;
     }
@@ -735,8 +774,8 @@
         cl = clues[c];
         need = new Map();
         for (j = 0; j < L; j++) {
-          if (cl.digits[j] === 2 && U[base + j] !== cl.ids[j]) return false;
-          if (cl.digits[j] > 0) need.set(cl.ids[j], (need.get(cl.ids[j]) || 0) + 1);
+          if (marks.isCorrect(cl.digits[j]) && U[base + j] !== cl.ids[j]) return false;
+          if (marks.isRevealed(cl.digits[j])) need.set(cl.ids[j], (need.get(cl.ids[j]) || 0) + 1);
         }
         var ok = true;
         need.forEach(function (nNeed, sym) {
@@ -814,7 +853,7 @@
       var index = new Map();
       var pats = [], lists = [], r, pat, k;
       for (r = 0; r < rem.length; r++) {
-        pat = Core.feedback(U, go, U, rem[r] * L, L, rule, counts, pow3);
+        pat = marks.pat(U, go, U, rem[r] * L, L, rule, counts, pow3);
         k = index.get(pat);
         if (k === undefined) { k = pats.length; index.set(pat, k); pats.push(pat); lists.push([]); }
         lists[k].push(rem[r]);
@@ -1067,7 +1106,8 @@
         guessMode: spec.guessMode,
         hard: spec.hard,
         dict: spec.dict || spec.guessIdx,
-        clues: spec.clues || []
+        clues: spec.clues || [],
+        hooks: spec.hooks
       });
     }
     var search = (guarantee || remN <= autoLimit) ? Core.prepareDepthSearch(spec) : null;
