@@ -15,6 +15,7 @@
     { id: 'en6', name: 'English 6-letter (built-in)', variant: 'wordle-en-6' },
     { id: 'en7', name: 'English 7-letter (built-in)', variant: 'wordle-en-7' },
     { id: 'en8', name: 'English 8-letter (built-in)', variant: 'wordle-en-8' },
+    { id: 'dungleon', name: 'Dungleon', manifest: 'packs/dungleon.json', variant: 'dungleon' },
     { id: 'blank', name: 'Custom — paste / upload your own lists', blank: true },
     { id: 'digits', name: 'Custom digits (0-9) — paste your list', blank: true, preset: { L: 5, alpha: '0123456789' } },
     { id: 'tokens', name: 'Custom tokens (cards, emoji…) — paste your list', blank: true, preset: { tok: true, alpha: '', ci: false } }
@@ -25,11 +26,11 @@
     layer: 'known', guessMode: 'dictionary', page: 'both',
     guarantee: false, steps: 6, stepsTouched: false, treePolicy: 'worst' };
   var packId = 'en5';
+  var packGuessDefault = null;
   var engine = null;
   var packPhase = 'idle';
   var packError = '';
   var packGen = 0;
-  var manifestP = null;
   var clues = [];
   var remaining = [];
   var remKnown = [];
@@ -58,14 +59,26 @@
     var clue = Pack.parseClue(s, activePack());
     return clue && clue.digits && clue.digits.length === cfg.L ? clue.digits : null;
   }
-  function digitsToPat(d) { return Pack.digitsToPat(d); }
-  function patToDigits(p) { return Pack.patToDigits(p, cfg.L); }
+  function digitsToPat(d) { return Pack.digitsToPat(d, engine ? engine.clueBase : 3); }
+  function patToDigits(p) { return Pack.patToDigits(p, cfg.L, engine ? engine.clueBase : 3); }
+  function showWord(w) {
+    w = w == null ? '' : String(w);
+    if (engine && engine.pack.caseInsensitive === false) return w;
+    return w.toUpperCase();
+  }
+  function foldWord(s) {
+    s = (s || '').trim();
+    if (!engine || engine.pack.caseInsensitive !== false) return s.toLowerCase();
+    return s;
+  }
   function patCode(d) {
     var id = engine ? engine.pack.clueRenderer : 'clues/wordle-gyb';
     return Renderers.clueCode(id, d, cfg.notation, engine && engine.pack);
   }
   function tilesHTML(syms, digits, opts) {
     var id = engine ? engine.pack.tokenRenderer : 'tiles/letters';
+    opts = Object.assign({}, opts || {});
+    if (engine && engine.pack) opts.marks = engine.pack.clueAlphabet;
     return Renderers.tiles(id, syms, digits, opts);
   }
   function esc(s) { return Renderers.esc(s); }
@@ -86,7 +99,11 @@
   }
   $('cluePreview').addEventListener('click', function (e) {
     var t = e.target.closest('.tile'); if (!t) return;
-    var i = +t.dataset.i; previewDigits[i] = ((previewDigits[i] || 0) + 1) % 3;
+    var i = +t.dataset.i;
+    var marks = (engine && engine.pack && engine.pack.clueAlphabet) || [{ value: 0 }, { value: 1 }, { value: 2 }];
+    var cur = previewDigits[i] || 0, k, idx = 0;
+    for (k = 0; k < marks.length; k++) if (marks[k].value === cur) idx = k;
+    previewDigits[i] = marks[(idx + 1) % marks.length].value;
     $('cluePat').value = patCode(previewDigits).replace(/⬛/g, 'b').replace(/🟨/g, 'y').replace(/🟩/g, 'g');
     renderPreview();
   });
@@ -194,7 +211,7 @@
     if (scoredRow && scoredRow.maxExact && scoredRow.maxSteps != null) maxBit = ' · max steps ' + scoredRow.maxSteps;
     else if (scoredRow && scoredRow.maxSteps != null) maxBit = ' · max steps ≤' + scoredRow.maxSteps;
     else if (scoredRow && scoredRow.maxUncertain) maxBit = ' · max steps ?';
-    $('bdSummary').innerHTML = n ? ('If you guess <b>' + esc(g.key.toUpperCase()) + '</b> with ' + n + ' answers possible: ' + rows.length + ' possible results · expected ' + fmt(n ? sumSq / n : 0, 2) +
+    $('bdSummary').innerHTML = n ? ('If you guess <b>' + esc(showWord(g.key)) + '</b> with ' + n + ' answers possible: ' + rows.length + ' possible results · expected ' + fmt(n ? sumSq / n : 0, 2) +
       ' left · largest group ' + worst + ' · ' + fmt(ent, 2) + ' bits' + stepsBit + maxBit + (buckets.has(allGreen) ? ' · <span class="ok">could be the answer</span>' : '') +
       (hardBreak ? ' · <span class="warn">breaks hard mode</span>' : '') +
       (note ? ' · <span class="warn">' + esc(note) + '</span>' : '')) : 'No answers remain — check your clues.';
@@ -254,6 +271,11 @@
     if (cfg.layer === 'preferred' && !remKnown.length) return 'theoretical solutions';
     return 'known answers';
   }
+  function cancelScore() {
+    reqId++;
+    clearTimeout(scoreTimer);
+    if (worker) { worker.terminate(); worker = null; }
+  }
   function scheduleScore() {
     markTreeStale();
     if (cfg.page === 'tree') return;
@@ -310,6 +332,14 @@
       checkLimit: 40, checkLimitLarge: 16
     };
     if (cfg.mode === 'steps') msg.steps = stepInfo;
+    if (engine.feedbackSource) {
+      msg.feedbackSource = engine.feedbackSource;
+      msg.syms = engine.syms;
+      msg.clueBase = engine.clueBase;
+      msg.greenDigit = engine.greenDigit;
+      msg.correctValues = engine.correctValues;
+      msg.revealedValues = engine.revealedValues;
+    }
     var label = 'Scoring ' + bp.pool.length.toLocaleString() + ' guesses × ' + remaining.length.toLocaleString() + ' ' + layerLabel() +
       (bp.pruned ? ' (pre-filtered from ' + bp.total.toLocaleString() + ' by letter coverage — raise “Max guesses to score” for a full search)' : '') +
       (cfg.mode === 'steps' ? ' · expected steps' : '') +
@@ -377,15 +407,16 @@
     function syncScore() {
       setTimeout(function () {
         var t0 = Date.now();
-        var sc = Core.scorePool(msg.U, msg.L, msg.K, msg.rule, msg.rem, msg.pool, msg.isCand);
+        var hooks = engine.scoringHooks;
+        var sc = Core.scorePool(msg.U, msg.L, msg.K, msg.rule, msg.rem, msg.pool, msg.isCand, null, hooks);
         if (msg.mode === 'steps') {
           var st = msg.steps || {};
           Core.attachExpectedSteps(sc, msg.U, msg.L, msg.K, msg.rule, msg.rem, msg.pool, {
-            guessMode: st.guessMode, hard: st.hard, dict: st.dict, clues: st.clues || []
+            guessMode: st.guessMode, hard: st.hard, dict: st.dict, clues: st.clues || [], hooks: hooks
           });
           msg.stepsAttached = true;
         }
-        var finished = Core.finishScores(sc, msg);
+        var finished = Core.finishScores(sc, Object.assign({}, msg, { hooks: hooks }));
         done(finished.top, Date.now() - t0, finished.depth);
       }, 10);
     }
@@ -436,9 +467,19 @@
     applyPage(cfg.page || 'both', true);
   }
   function reportPack(keepClues) {
-    var msg = engine.nKnown.toLocaleString() + ' answers, ' + (engine.nWords - engine.nKnown).toLocaleString() + ' extra guesses';
+    var extraGuesses = 0, fi;
+    for (fi = 0; fi < engine.flags.length; fi++) if (engine.flags[fi].guess && !engine.flags[fi].known) extraGuesses++;
+    var msg = engine.nKnown.toLocaleString() + ' answers, ' + extraGuesses.toLocaleString() + ' extra guesses';
+    if (engine.pack.lists && engine.pack.lists.theoretical === 'generated') {
+      msg += ' · ' + engine.theoreticalIdx.length.toLocaleString() + ' theoretical';
+    }
+    if (engine.ruleDrift && engine.ruleDrift.length) {
+      msg += ' · ' + engine.ruleDrift.length + ' known answers outside the generated rules (' +
+        engine.ruleDrift.slice(0, 8).join(', ') + (engine.ruleDrift.length > 8 ? ', …' : '') + ')';
+    }
     if (engine.rej) msg += ' · ' + engine.rej + ' entries skipped (wrong length/alphabet)';
     if (engine.dup) msg += ' · ' + engine.dup + ' duplicates merged';
+    document.body.classList.toggle('case-sensitive', !!(engine.pack && engine.pack.caseInsensitive === false));
     $('packMsg').textContent = msg;
     $('packSummary').textContent = ($('packSel').selectedOptions[0] || {}).textContent + ' · ' + engine.nKnown.toLocaleString() + ' answers';
     dropTree();
@@ -458,6 +499,7 @@
   function mountCustom(keepClues) {
     packGen++;
     treeFlushToken++;
+    cancelScore();
     try {
       readCfgFromUI();
       var pack = Pack.fromCustom({
@@ -474,18 +516,34 @@
       throw err;
     }
   }
-  function englishManifest() {
-    if (!manifestP) {
-      manifestP = fetch('packs/wordle-en.json').then(function (r) {
+  function fetchManifest(url) {
+    if (!manifestCache[url]) {
+      manifestCache[url] = fetch(url).then(function (r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();
-      }).catch(function (e) { manifestP = null; throw e; });
+      }).catch(function (e) { delete manifestCache[url]; throw e; });
     }
-    return manifestP;
+    return manifestCache[url];
   }
-  function loadPack(id, keepClues) {
+  var manifestCache = {};
+  function applyDeclaredGuessMode(declared, applyDefaults) {
+    if (applyDefaults) {
+      if (declared) applyGuessMode(declared);
+      else if (packGuessDefault) applyGuessMode('dictionary');
+    }
+    packGuessDefault = declared || null;
+  }
+  function applyGuessMode(mode) {
+    cfg.guessMode = mode;
+    if (mode === 'any') { cfg.valid = 'any'; cfg.hard = 'off'; cfg.ansOnly = false; }
+    else if (mode === 'hard') { cfg.valid = 'both'; cfg.hard = 'strict'; cfg.ansOnly = false; }
+    else if (mode === 'answersOnly') { cfg.valid = 'both'; cfg.hard = 'off'; cfg.ansOnly = true; }
+    else { cfg.valid = 'both'; cfg.hard = 'off'; cfg.ansOnly = false; cfg.guessMode = 'dictionary'; }
+  }
+  function loadPack(id, keepClues, applyDefaults) {
     var gen = ++packGen;
     treeFlushToken++;
+    cancelScore();
     packPhase = 'loading';
     packId = id;
     function current() { return gen === packGen; }
@@ -511,7 +569,7 @@
       $('setupCard').open = true; mountCustom(false); return Promise.resolve();
     }
     $('packMsg').textContent = 'Loading…';
-    return englishManifest().then(function (manifest) {
+    return fetchManifest(b.manifest || 'packs/wordle-en.json').then(function (manifest) {
       if (!current()) return;
       var variant = null;
       (manifest.variants || []).forEach(function (v) { if (v.id === b.variant) variant = v; });
@@ -522,17 +580,18 @@
       }
       return Promise.all([
         fetchPack(variant.knownSolutions),
-        fetchPack(variant.guessList),
+        variant.guessList ? fetchPack(variant.guessList) : Promise.resolve(''),
         Pack.loadRules(pack, fetchPack)
       ]).then(function (t) {
         if (!current()) return;
-        cfg.L = pack.length; cfg.tok = false; cfg.ci = pack.caseInsensitive;
+        cfg.L = pack.length; cfg.tok = pack.delimiter !== 'none'; cfg.ci = pack.caseInsensitive;
         cfg.alpha = typeof manifest.alphabet === 'string' ? manifest.alphabet : cfg.alpha;
         cfg.rule = pack.feedback === 'simple' ? 'simple' : 'wordle';
+        applyDeclaredGuessMode(variant.guessMode || manifest.guessMode || b.guessMode || null, applyDefaults);
         writeCfgToUI();
-        $('ansText').value = t[0].trim(); $('guessText').value = t[1].trim();
+        $('ansText').value = t[0].trim(); $('guessText').value = (t[1] || '').trim();
         pack.rulesImpl = t[2];
-        engine = window.SolverEngine.create(pack, { answers: t[0], guesses: t[1] });
+        engine = window.SolverEngine.create(pack, { answers: t[0], guesses: t[1] || '' });
         reportPack(keepClues);
       });
     }).catch(function (e) {
@@ -544,7 +603,7 @@
       failQueuedPack();
     });
   }
-  $('packSel').addEventListener('change', function () { loadPack($('packSel').value, false); });
+  $('packSel').addEventListener('change', function () { loadPack($('packSel').value, false, true); });
   $('applyBtn').addEventListener('click', function () { mountCustom(true); });
   $('savePackBtn').addEventListener('click', function () {
     var name = prompt('Name for this pack (saved in this browser only):', ''); if (!name) return;
@@ -674,7 +733,7 @@
     return [
       cfg.hard, cfg.guessMode, cfg.layer, cfg.rule, cfg.valid, cfg.steps,
       ($('treePolicy') && $('treePolicy').value) || cfg.treePolicy || 'worst',
-      ($('treeOpener') && $('treeOpener').value || '').trim().toLowerCase(),
+      foldWord($('treeOpener') && $('treeOpener').value || ''),
       clueSig, remaining.length, h
     ].join('|');
   }
@@ -690,7 +749,7 @@
     var have = [];
     TREE_OPENERS.forEach(function (w) { if (engine.keyIdx.has(w)) have.push(w); });
     $('treePicks').innerHTML = have.map(function (w) {
-      return '<button type="button" class="ghost mini" data-pick="' + esc(w) + '">' + esc(w.toUpperCase()) + '</button>';
+      return '<button type="button" class="ghost mini" data-pick="' + esc(w) + '">' + esc(showWord(w)) + '</button>';
     }).join('');
     $('treeOpenerList').innerHTML = have.map(function (w) {
       return '<option value="' + esc(w) + '"></option>';
@@ -723,7 +782,7 @@
   }
   function markActivePick(word) {
     if (!$('treePicks')) return;
-    var want = (word || '').toLowerCase();
+    var want = foldWord(word || '');
     Array.prototype.forEach.call($('treePicks').querySelectorAll('[data-pick]'), function (b) {
       b.classList.toggle('on', b.getAttribute('data-pick') === want);
     });
@@ -857,27 +916,27 @@
         famHtml += '<span class="preview">' + esc(words.slice(0, 16).join(' ')) + (words.length > 16 ? ' …' : '') + '</span>';
         famHtml += '</div></div>';
       });
-      var line = worstLine(tree.root).map(function (gi) { return treeWord(gi).toUpperCase(); });
+      var line = worstLine(tree.root).map(function (gi) { return showWord(treeWord(gi)); });
       if (line.length) famHtml += '<p class="muted small">Longest branch: ' + esc(line.join(' → ')) + '</p>';
     }
     if (s.unproved) famHtml += '<p class="muted small">' + s.unproved + ' answers are unproved on this build.</p>';
     famEl.innerHTML = famHtml;
 
     if (!node) { walkEl.innerHTML = ''; return; }
-    var crumbs = '<div class="tree-crumb"><button type="button" class="ghost mini" data-crumb="0">' + esc(treeWord(tree.root.guess).toUpperCase() || 'opener') + '</button>';
+    var crumbs = '<div class="tree-crumb"><button type="button" class="ghost mini" data-crumb="0">' + esc(showWord(treeWord(tree.root.guess)) || 'opener') + '</button>';
     var walk = tree.root, ci;
     for (ci = 0; ci < treePath.length; ci++) {
       var step = walk.children[treePath[ci]];
       if (!step) break;
       var crumb = patCode(patToDigits(step.pat));
-      if (step.node && step.node.guess != null) crumb += ' ' + treeWord(step.node.guess).toUpperCase();
+      if (step.node && step.node.guess != null) crumb += ' ' + showWord(treeWord(step.node.guess));
       crumbs += '<span class="muted">›</span><button type="button" class="ghost mini" data-crumb="' + (ci + 1) + '">' + esc(crumb) + '</button>';
       if (!step.node) break;
       walk = step.node;
     }
     crumbs += '</div>';
     var mark = (!node.forced && node.policyExact === false) ? ' ≈' : '';
-    var head = '<div class="tree-head"><b>' + esc((treeWord(node.guess) || '—').toUpperCase()) + mark + '</b>';
+    var head = '<div class="tree-head"><b>' + esc(showWord(treeWord(node.guess) || '—')) + mark + '</b>';
     head += '<span class="muted small">' + node.n + ' answers';
     if (node.maxDepth != null) head += ' · max ' + node.maxDepth;
     if (node.over) head += ' · ' + node.over + ' over n';
@@ -1003,7 +1062,7 @@
   }
   function treeMessage(enc, snap, id) {
     var idx = engine.keyIdx.has(enc.key) ? engine.keyIdx.get(enc.key) : -1;
-    return {
+    var msg = {
       type: 'tree', id: id,
       U: engine.U, L: cfg.L, K: engine.syms.length, rule: engine.feedbackRule,
       rem: snap.rem, guessIdx: snap.guessIdx, clues: snap.clues,
@@ -1012,6 +1071,15 @@
       budget: snap.budget, policy: snap.policy,
       limits: { timeCapMs: 12000 }
     };
+    if (engine.feedbackSource) {
+      msg.feedbackSource = engine.feedbackSource;
+      msg.syms = engine.syms;
+      msg.clueBase = engine.clueBase;
+      msg.greenDigit = engine.greenDigit;
+      msg.correctValues = engine.correctValues;
+      msg.revealedValues = engine.revealedValues;
+    }
+    return msg;
   }
   function openerScanPlan() {
     var remWords = [], i;
@@ -1055,7 +1123,7 @@
         if (id !== treeReq) return;
         try {
           var t0 = Date.now();
-          var tree = Core.buildOpenerTree(msg, function (done, total) {
+          var tree = Core.buildOpenerTree(Object.assign({}, msg, { hooks: engine && engine.scoringHooks }), function (done, total) {
             if (id !== treeReq) return;
             var bar = $('treeBar');
             if (bar) bar.style.width = (100 * done / Math.max(1, total)) + '%';
@@ -1176,7 +1244,7 @@
       }
       setTreeWarn(TreeStatus.errorText(err));
     }
-    $('treeStatus').innerHTML = 'Building tree for <b>' + esc(enc.key.toUpperCase()) + '</b>…<div class="bar"><i id="treeBar"></i></div>';
+    $('treeStatus').innerHTML = 'Building tree for <b>' + esc(showWord(enc.key)) + '</b>…<div class="bar"><i id="treeBar"></i></div>';
     dispatchTree(id, msg, show, failTree);
   }
   function showFinishedTree(hit) {
@@ -1208,10 +1276,10 @@
     }
     var word = job.plan.all[job.i] || '';
     var stopped;
-    if (!job.tried) stopped = 'Scan stopped during ' + word.toUpperCase() + ' (' + (job.i + 1) + '/' + job.plan.all.length + ').';
+    if (!job.tried) stopped = 'Scan stopped during ' + showWord(word) + ' (' + (job.i + 1) + '/' + job.plan.all.length + ').';
     else stopped = 'Scan stopped after ' + job.tried + ' of ' + job.plan.all.length + '.';
     if (job.best && job.best.summary.maxDepth != null) {
-      stopped += ' Best max depth so far was ' + job.best.summary.maxDepth + ' (' + job.best.word.toUpperCase() + ').';
+      stopped += ' Best max depth so far was ' + job.best.summary.maxDepth + ' (' + showWord(job.best.word) + ').';
     }
     $('treeStatus').textContent = stopped;
   }
@@ -1225,7 +1293,7 @@
     if (!job.tried) text = 'None of the starters could be built under these settings.';
     else text = 'None of the ' + job.tried + ' tried openers fit n=' + n + ' under these settings.';
     if (job.best && job.best.summary.maxDepth != null) {
-      text += ' Best max depth was ' + job.best.summary.maxDepth + ' (' + job.best.word.toUpperCase() + ').';
+      text += ' Best max depth was ' + job.best.summary.maxDepth + ' (' + showWord(job.best.word) + ').';
     } else if (job.tried) {
       text += ' No opener played out every answer.';
     }
@@ -1238,7 +1306,7 @@
     setScanRunning(false);
     showFinishedTree(hit);
     var s = hit.summary;
-    $('treeStatus').textContent = hit.word.toUpperCase() + ' fits n=' + s.budget + ' (max ' + s.maxDepth + ').';
+    $('treeStatus').textContent = showWord(hit.word) + ' fits n=' + s.budget + ' (max ' + s.maxDepth + ').';
     saveState();
   }
   function stepScan() {
@@ -1271,7 +1339,7 @@
       setScanRunning(false);
       return;
     }
-    $('treeStatus').innerHTML = 'Trying <b>' + esc(enc.key.toUpperCase()) + '</b>… ' +
+    $('treeStatus').innerHTML = 'Trying <b>' + esc(showWord(enc.key)) + '</b>… ' +
       (job.i + 1) + '/' + job.plan.all.length +
       '<div class="bar"><i id="treeBar"></i></div>';
     dispatchTree(id, msg, function (tree, ms) {
@@ -1356,7 +1424,7 @@
   $('treeOpener').addEventListener('input', function () {
     markTreeStale();
     if (!treeQueue) return;
-    treeQueue.userEdited = treeOpenerValue().toLowerCase() !== (treeQueue.opener || '').toLowerCase();
+    treeQueue.userEdited = foldWord(treeOpenerValue()) !== foldWord(treeQueue.opener || '');
   });
   $('treePolicy').addEventListener('change', function () {
     cfg.treePolicy = this.value;

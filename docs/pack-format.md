@@ -59,8 +59,9 @@ List paths are relative to `src/packs/`. `knownSolutions` is the published answe
 | `guessList` | Theoretical solutions are the guess list (and the known answers) that pass `validSolution`. This is the English pack. |
 | `known` | Reserved for packs whose only solutions are the known list. Known rows are still marked theoretical today. |
 | `alphabet` | Reserved. The engine does **not** expand alphabet^length yet (Mastermind 6^4 would, a 5-letter Latin alphabet would not). |
+| `generated` | The rules script's `generateSolutions()` fills the theoretical pool. Known answers are still loaded from the list file. A known answer that fails `validSolution` stays on the known list and is reported as rule drift; it is not dropped. |
 
-Analysis scoring today is the Wordlebot partition: per-slot clues whose marks are valued 0, 1, and 2, packed into a base-3 integer. `feedback` is `wordle` (extra copies go gray) or `simple` (any present token goes yellow).
+Analysis scoring is the Wordlebot partition. Per-slot marks are packed into an integer, position 0 the least significant digit. The radix is one more than the largest clue-alphabet `value` (3 for the English 0/1/2 marks). `feedback` on the JSON is `wordle` (extra copies go gray), `simple` (any present token goes yellow), or left to a script (see below).
 
 ## Validators
 
@@ -74,11 +75,15 @@ consistentAll(history, secret) -> boolean   // every clue, folded by the engine
 `rules` is either:
 
 - `builtin:wordle` or `builtin:simple` — a word is valid when it matches the length and alphabet and it is in the loaded lists. `consistent` is “the feedback of `guess` against `secret` equals `clue`”.
-- `script:rules/wordle.js` — the page fetches that file and evaluates it as a function body with `module` and `exports`. The script must export `validGuess`, `validSolution`, and `consistent`. An optional `feedback(guess, secret, ctx)` may return a clue. `ctx` is the engine (`structural`, `inLists`, `pattern`, `cluePattern`, `pack`).
+- `script:rules/wordle.js` — the page fetches that file and evaluates it as a function body with `module` and `exports`. The script must export `validGuess`, `validSolution`, and `consistent`. An optional `feedback(guess, secret, ctx)` may return a clue (`{ digits, pat }` or a pattern integer). `ctx` is the engine (`structural`, `inLists`, `pattern`, `cluePattern`, `pack`).
+
+Set `feedbackKind` to `'custom'` when that `feedback` should replace the built-in scorer. The engine then uses it for remaining-set checks (`consistentAllIndex`, `partition`, `replay`) and for Analysis (one-ply partitions, expected steps, the depth search, and the opener tree). The pattern radix follows the clue alphabet, so a pack can use more than three marks. An optional `feedbackIds(g, go, a, ao, L)` may return the same pattern from symbol-id arrays; Analysis calls that on the hot path when it is present. Omit `feedbackKind`, or set it to `'core'`, to keep Wordle's base-3 `Core.feedback` (the reference script does this). A custom `feedback` must compute the clue itself. Calling `ctx.pattern` from a custom feedback loops.
+
+`generateSolutions()` may return the theoretical word list (strings or token arrays). The engine calls it when `pools.theoretical` is `generated`, then keeps rows that pass `validSolution`.
 
 The script is not given a DOM or a network helper. It still runs in the page’s JavaScript realm; treat it as an authoring escape hatch, not a sandbox against untrusted authors. The shipped English presets use the builtin so they do not need the script.
 
-`src/packs/rules/wordle.js` is the reference script. It matches `builtin:wordle`.
+`src/packs/rules/wordle.js` is the reference script. It matches `builtin:wordle`. `src/packs/rules/dungleon.js` is the custom-feedback example (five marks, generated solutions).
 
 ## Guess modes
 
@@ -113,18 +118,18 @@ Scenario shows both counts (and both lists). Analysis partitions whichever layer
 | --- | --- |
 | `tiles/letters` | Letter tiles |
 | `tiles/cards` | Multi-character tokens (cards), without forced capitals |
-| `tiles/dungleon` | Same text treatment, reserved for Dungleon glyphs |
-| `clues/wordle-gyb` | G/Y/B, g/y/r, 2/1/0, or emoji tiles |
+| `tiles/dungleon` | Letter tiles without forced capitals, used by the Dungleon pack. No glyph art. |
+| `clues/wordle-gyb` | G/Y/B, g/y/r, 2/1/0, or emoji tiles. A clue alphabet longer than three marks prints each mark's `label` instead (Dungleon: `rgyYG`). |
 | `clues/arrows-lr` | `· ← →` for a future left/right clue |
 | `clues/mastermind-pips` | A `2B1W` style summary if marks are 0/1/2 |
 
-Dungleon and Purrdle need real lists and real validators. They are not shipped as playable packs.
+Dungleon ships as `src/packs/dungleon.json`. Its known list is `dungleon-prevsolutions.txt` (397 unique official dungeons from the previous-solutions history, not the longer generated set). Rules are in `rules/dungleon.js`. Purrdle still needs a real pack. It is not shipped.
 
 ## Clues
 
 `clueShape` is `perSlot`, `whole`, or `mixed`.
 
-- `perSlot` — one mark per token. The English page parses `bgybb`, `rgyrr`, `21021`, and the green/yellow/black emoji.
+- `perSlot` — one mark per token. The English page parses `bgybb`, `rgyrr`, `21021`, and the green/yellow/black emoji, case-insensitively. A pack with `clueCaseSensitive: true` keeps mark case, so `y` and `Y` are different symbols. Clicking a tile cycles every mark in the clue alphabet.
 - `whole` — one clue for the guess (`"2B1W"`). Parsed, not scored, until a pack script defines `consistent` for it. The Mastermind sketch uses this and is not in the preset menu.
 - `mixed` — reserved for a clue that has both slot marks and a whole-guess mark.
 
@@ -139,4 +144,6 @@ A per-slot clue in memory looks like:
 }
 ```
 
-`pat` is the base-3 integer (position 0 is the least significant digit) used by the scorer.
+`pat` is the base-N integer (position 0 is the least significant digit) used by the scorer. N is 3 for Wordle. A mark's `role` is `absent`, `present`, or `correct`. Wordle hard mode locks `correct` slots and requires every `present` or `correct` copy to be reused. `solve: true` is the all-green digit (the guess matches the secret). `paint` is an optional tile class (`b`, `y`, `g`, or a pack class such as `yp` / `gp`).
+
+A manifest may set `guessMode` (`any`, `dictionary`, `hard`, `answersOnly`). Choosing that preset applies the mode; choosing a preset that does not declare one returns to `dictionary` if the previous preset had declared a mode. Reloading the page keeps the saved toggle.

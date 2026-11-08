@@ -7,6 +7,8 @@ Pure client-side (HTML/CSS/JS, no backend, nothing uploaded). Files:
   worker.js               Web Worker that runs scoring and opener trees off the UI thread
   app.js                  UI, clue entry, packs, breakdown, tree page
   packs/englishN-*.txt    built-in English packs, N = 4..8
+  packs/dungleon.json     Dungleon pack (397 previous solutions + generated rules)
+  packs/dungleon-prevsolutions.txt
 
 Word lists / attribution
 ------------------------

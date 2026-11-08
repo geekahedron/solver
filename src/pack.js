@@ -42,15 +42,19 @@
 
   function makeClueMap(pack) {
     var map = {};
+    var sensitive = !!(pack && pack.clueCaseSensitive);
     var useLegacy = !pack.clueRenderer || pack.clueRenderer === 'clues/wordle-gyb';
     if (useLegacy) {
       Object.keys(LEGACY_CLUE).forEach(function (k) { map[k] = LEGACY_CLUE[k]; });
     }
+    function put(s, value) {
+      if (s == null || s === '') return;
+      var key = sensitive ? String(s) : normRaw(s, { caseInsensitive: true });
+      map[key] = value;
+    }
     (pack.clueAlphabet || []).forEach(function (mark) {
-      if (mark.label) map[normRaw(mark.label, { caseInsensitive: true })] = mark.value;
-      (mark.symbols || []).forEach(function (s) {
-        map[normRaw(s, { caseInsensitive: true })] = mark.value;
-      });
+      put(mark.label, mark.value);
+      (mark.symbols || []).forEach(function (s) { put(s, mark.value); });
     });
     return map;
   }
@@ -78,6 +82,8 @@
       delimiterValue: manifest.delimiterValue || '-',
       clueShape: manifest.clueShape || 'perSlot',
       clueAlphabet: manifest.clueAlphabet || defaultClueAlphabet(),
+      clueCaseSensitive: !!manifest.clueCaseSensitive,
+      guessMode: variant.guessMode || manifest.guessMode || null,
       tokenRenderer: manifest.tokenRenderer || 'tiles/letters',
       clueRenderer: manifest.clueRenderer || 'clues/wordle-gyb',
       feedback: manifest.feedback || 'wordle',
@@ -139,16 +145,62 @@
     return String(text).split(/\r?\n/).map(function (line) { return line.trim(); }).filter(Boolean);
   };
 
-  Pack.digitsToPat = function (digits) {
+  // base defaults to 3 so existing Wordle callers keep the same integers.
+  Pack.digitsToPat = function (digits, base) {
+    base = base || 3;
     var p = 0, m = 1, i;
-    for (i = 0; i < digits.length; i++, m *= 3) p += digits[i] * m;
+    for (i = 0; i < digits.length; i++, m *= base) p += digits[i] * m;
     return p;
   };
 
-  Pack.patToDigits = function (p, L) {
+  Pack.patToDigits = function (p, L, base) {
+    base = base || 3;
     var d = [], i;
-    for (i = 0; i < L; i++) { d.push(p % 3); p = Math.floor(p / 3); }
+    for (i = 0; i < L; i++) { d.push(p % base); p = Math.floor(p / base); }
     return d;
+  };
+
+  // Radix and mark roles for a per-slot clue alphabet. Wordle's 0/1/2 alphabet
+  // is base 3, correct digit 2. A longer alphabet (Dungleon is base 5) uses
+  // max(value)+1. role "correct" locks a slot; "present" and "correct" count
+  // as revealed copies. solve marks the all-green digit.
+  Pack.clueModel = function (pack) {
+    var marks = (pack && pack.clueAlphabet && pack.clueAlphabet.length) ? pack.clueAlphabet : defaultClueAlphabet();
+    var max = 0, i, m, greenDigit = null;
+    var correct = [], revealed = [];
+    for (i = 0; i < marks.length; i++) {
+      m = marks[i];
+      if (typeof m.value === 'number' && m.value > max) max = m.value;
+    }
+    for (i = 0; i < marks.length; i++) {
+      m = marks[i];
+      if (m.solve) greenDigit = m.value;
+    }
+    if (greenDigit == null) {
+      for (i = 0; i < marks.length; i++) {
+        m = marks[i];
+        if (m.plus) continue;
+        if (m.role === 'correct' || m.value === 2) { greenDigit = m.value; break; }
+      }
+    }
+    if (greenDigit == null) greenDigit = 2;
+    for (i = 0; i < marks.length; i++) {
+      m = marks[i];
+      var role = m.role;
+      if (!role) {
+        if (m.value === 0) role = 'absent';
+        else if (m.value === 2) role = 'correct';
+        else if (m.value === 1) role = 'present';
+      }
+      if (role === 'correct') correct.push(m.value);
+      if (role === 'present' || role === 'correct') revealed.push(m.value);
+    }
+    return {
+      base: Math.max(2, max + 1),
+      greenDigit: greenDigit,
+      correctValues: correct,
+      revealedValues: revealed
+    };
   };
 
   Pack.parseClue = function (text, pack) {
@@ -158,8 +210,10 @@
       if (!whole) return null;
       return { shape: 'whole', value: whole, slots: [], digits: null, pat: null };
     }
-    var chars = Array.from(String(text == null ? '' : text).toLowerCase().replace(/[\s\uFE0F\u200D]/g, ''));
+    var raw = String(text == null ? '' : text).replace(/[\s\uFE0F\u200D]/g, '');
+    var chars = pack.clueCaseSensitive ? Array.from(raw) : Array.from(raw.toLowerCase());
     var digits = [], i, v;
+    var base = Pack.clueModel(pack).base;
     for (i = 0; i < chars.length; i++) {
       v = pack._clueMap[chars[i]];
       if (v === undefined) return null;
@@ -169,7 +223,7 @@
     return {
       shape: 'perSlot',
       digits: digits,
-      pat: Pack.digitsToPat(digits),
+      pat: Pack.digitsToPat(digits, base),
       slots: digits.map(function (d) {
         var mark = null;
         (pack.clueAlphabet || []).forEach(function (m) { if (m.value === d) mark = m; });
@@ -218,7 +272,49 @@
     if (!out || typeof out.validGuess !== 'function' || typeof out.validSolution !== 'function' || typeof out.consistent !== 'function') {
       throw new Error('Pack script must export validGuess, validSolution, and consistent');
     }
+    out._source = source;
     return out;
+  };
+
+  // Turn a rules module into the optional Analysis hook. Missing feedbackKind
+  // 'custom' returns null so Wordle keeps Core.feedback and base 3.
+  // pat(g, go, a, ao, L, ...) matches Core.feedback's leading arguments.
+  Pack.hooksFromRules = function (rules, meta) {
+    if (!rules || rules.feedbackKind !== 'custom' || typeof rules.feedback !== 'function') return null;
+    meta = meta || {};
+    var base = meta.base || 3;
+    var syms = meta.syms || [];
+    var correct = null;
+    var revealed = null;
+    if (meta.correctValues && meta.correctValues.length) {
+      correct = {};
+      meta.correctValues.forEach(function (v) { correct[v] = 1; });
+    }
+    if (meta.revealedValues && meta.revealedValues.length) {
+      revealed = {};
+      meta.revealedValues.forEach(function (v) { revealed[v] = 1; });
+    }
+    return {
+      base: base,
+      greenDigit: meta.greenDigit == null ? 2 : meta.greenDigit,
+      pat: function (g, go, a, ao, L) {
+        if (typeof rules.feedbackIds === 'function') return rules.feedbackIds(g, go, a, ao, L);
+        var guess = new Array(L);
+        var secret = new Array(L);
+        var i, p = 0, m = 1, clue, digits;
+        for (i = 0; i < L; i++) {
+          guess[i] = syms[g[go + i]];
+          secret[i] = syms[a[ao + i]];
+        }
+        clue = rules.feedback(guess, secret, { pack: { length: L } });
+        if (clue && typeof clue.pat === 'number') return clue.pat;
+        digits = clue && clue.digits ? clue.digits : clue;
+        for (i = 0; i < L; i++, m *= base) p += digits[i] * m;
+        return p;
+      },
+      correct: correct ? function (digit) { return !!correct[digit]; } : null,
+      revealed: revealed ? function (digit) { return !!revealed[digit]; } : null
+    };
   };
 
   Pack.resolveRules = function (pack) {

@@ -57,7 +57,7 @@ One pack describes a game. The page then toggles how you play it:
 - **Page** — Scenario (remaining lists), Analysis (pattern partitions and scores), Tree (one opener’s solve tree), or both.
 - **Guarantee** — on Analysis, keep only guesses that can be proved to finish every remaining answer in at most n further guesses (default 6 minus clues entered), under the same guess mode and hard-mode rules on every later step. Max steps is that multi-ply worst case. The one-ply Worst column is unchanged. When scoring is fewest expected steps, survivors stay ordered by that average.
 
-The English presets are that one pack: `src/packs/wordle-en.json`, the ENABLE lists, and Wordle `consistent` / feedback. Custom paste and upload still build a pack in the browser. Dungleon, Purrdle, and Mastermind are not playable here; `src/packs/mastermind-sketch.json` only reserves the shape. Details are in [docs/pack-format.md](docs/pack-format.md).
+The English presets are that one pack: `src/packs/wordle-en.json`, the ENABLE lists, and Wordle `consistent` / feedback. Dungleon is a second built-in pack (`src/packs/dungleon.json`): case-sensitive entity letters, any 5-token guess, a known list of 397 unique previous solutions, and a theoretical pool generated from the dungeon rules. Clues use five marks (`r`, `y`, `Y`, `g`, `G`). Custom paste and upload still build a pack in the browser. Purrdle and Mastermind are not playable here; `src/packs/mastermind-sketch.json` only reserves the shape. Details are in [docs/pack-format.md](docs/pack-format.md).
 
 ## Expected steps
 
@@ -93,6 +93,7 @@ node test/engine.test.js
 node test/guarantee.test.js
 node test/tree.test.js
 node test/tree-status.test.js
+node test/dungleon.test.js
 ```
 
 `node test/tree-ui.js` starts its own static server and clicks Build tree in Chrome (same `puppeteer-core` dependency as the smokes below). It covers a click while the pack is still loading, a click after the pack fails, a bad opener, and a worker failure whose sync fallback also throws.

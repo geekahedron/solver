@@ -10,13 +10,24 @@
     });
   }
 
+  function paintClass(digit, opts) {
+    var marks = opts && opts.marks;
+    var i, m;
+    if (marks) {
+      for (i = 0; i < marks.length; i++) {
+        m = marks[i];
+        if (m.value === digit && m.paint) return m.paint;
+      }
+    }
+    return ['b', 'y', 'g'][digit] || 'b';
+  }
+
   function renderTiles(className) {
     return function (syms, digits, opts) {
       opts = opts || {};
-      var cls = ['b', 'y', 'g'];
       var html = '<span class="tiles ' + className + '">';
       for (var i = 0; i < syms.length; i++) {
-        var paint = digits ? (cls[digits[i]] || 'b') : 'e';
+        var paint = digits ? paintClass(digits[i], opts) : 'e';
         var attr = opts.interactive ? ' data-i="' + i + '"' : '';
         html += '<span class="tile ' + paint + '"' + attr + '>' + esc(syms[i] || '·') + '</span>';
       }
@@ -45,6 +56,13 @@
   function clueCode(id, digits, notation, pack) {
     var i, mark;
     if (!id || id === 'clues/wordle-gyb') {
+      if (pack && pack.clueAlphabet && pack.clueAlphabet.length > 3) {
+        return digits.map(function (x) {
+          var mark = null;
+          pack.clueAlphabet.forEach(function (m) { if (m.value === x) mark = m; });
+          return mark ? mark.label : String(x);
+        }).join('');
+      }
       var n = NOT[notation] || NOT.GYB;
       return digits.map(function (x) { return n[x] == null ? n[0] : n[x]; }).join('');
     }

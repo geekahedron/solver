@@ -46,9 +46,22 @@
       U: null,
       feedbackRule: pack.feedback || 'wordle',
       rules: null,
+      customFeedback: false,
+      scoringHooks: null,
+      feedbackSource: null,
+      clueBase: 3,
+      greenDigit: 2,
+      correctValues: [2],
+      revealedValues: [1, 2],
+      ruleDrift: [],
       _counts: new Int16Array(64),
       _pow3: Core.pow3(L)
     };
+    var clueModel = Pack.clueModel(pack);
+    eng.clueBase = clueModel.base;
+    eng.greenDigit = clueModel.greenDigit;
+    eng.correctValues = clueModel.correctValues;
+    eng.revealedValues = clueModel.revealedValues;
 
     function symIdOf(s) {
       var id = eng.symId.get(s);
@@ -83,11 +96,13 @@
         eng.tokens.push(tokens);
         eng.flags.push({ known: false, theoretical: false, guess: false });
         for (var t = 0; t < tokens.length; t++) symIdOf(tokens[t]);
-      } else eng.dup++;
+      } else if (kind !== 'theoretical') eng.dup++;
       var f = eng.flags[idx];
       if (kind === 'known') {
         f.known = true;
         f.guess = true;
+        f.theoretical = true;
+      } else if (kind === 'theoretical') {
         f.theoretical = true;
       } else {
         f.guess = true;
@@ -95,8 +110,19 @@
       }
     }
 
+    eng.rules = pack.rulesImpl || Pack.resolveRules(pack);
+    if (!pack.feedback && eng.rules.feedback && typeof eng.rules.feedback !== 'function') {
+      eng.feedbackRule = eng.rules.feedback;
+    }
+    eng.customFeedback = !!(eng.rules && eng.rules.feedbackKind === 'custom' && typeof eng.rules.feedback === 'function');
+    eng.feedbackSource = eng.customFeedback ? (eng.rules._source || null) : null;
+
     Pack.splitEntries(lists.answers, pack).forEach(function (w) { add(w, 'known'); });
     Pack.splitEntries(lists.guesses, pack).forEach(function (w) { add(w, 'guess'); });
+    if (theoFrom === 'generated' && typeof eng.rules.generateSolutions === 'function') {
+      var generated = eng.rules.generateSolutions(eng) || [];
+      for (var gi = 0; gi < generated.length; gi++) add(generated[gi], 'theoretical');
+    }
     eng.nWords = eng.keys.length;
 
     eng.U = new Uint16Array(Math.max(1, eng.nWords) * L);
@@ -115,6 +141,11 @@
       return eng.keyIdx.has(Pack.formatWord(word, pack));
     };
     eng.pattern = function (guess, secret) {
+      if (eng.customFeedback && eng.rules && typeof eng.rules.feedback === 'function') {
+        var clue = eng.rules.feedback(guess, secret, eng);
+        if (clue && typeof clue.pat === 'number') return clue.pat;
+        return Pack.digitsToPat(clue.digits, eng.clueBase);
+      }
       var g = idsOf(guess), s = idsOf(secret);
       ensureCounts();
       return Core.feedback(g, 0, s, 0, L, eng.feedbackRule, eng._counts, eng._pow3);
@@ -122,7 +153,7 @@
     eng.cluePattern = function (clue) {
       if (!clue) return null;
       if (typeof clue.pat === 'number') return clue.pat;
-      if (clue.digits) return Pack.digitsToPat(clue.digits);
+      if (clue.digits) return Pack.digitsToPat(clue.digits, eng.clueBase);
       return null;
     };
 
@@ -132,19 +163,27 @@
       return ids;
     }
 
-    eng.rules = Pack.resolveRules(pack);
-    if (!pack.feedback && eng.rules.feedback) eng.feedbackRule = eng.rules.feedback;
-
     for (var i = 0; i < eng.flags.length; i++) {
       var f = eng.flags[i];
       if (f.known) eng.knownIdx.push(i);
       if (f.guess) eng.guessIdx.push(i);
       if (f.theoretical && eng.rules.validSolution(eng.tokens[i], eng)) eng.theoreticalIdx.push(i);
-      else f.theoretical = false;
+      else {
+        if (f.known && f.theoretical) eng.ruleDrift.push(eng.keys[i]);
+        f.theoretical = false;
+      }
     }
     eng.nKnown = eng.knownIdx.length;
+    eng.scoringHooks = eng.customFeedback ? Pack.hooksFromRules(eng.rules, {
+      base: eng.clueBase,
+      greenDigit: eng.greenDigit,
+      syms: eng.syms,
+      correctValues: eng.correctValues,
+      revealedValues: eng.revealedValues
+    }) : null;
 
     eng.feedbackPat = function (ids, idx) {
+      if (eng.scoringHooks) return eng.scoringHooks.pat(ids, 0, eng.U, idx * L, L);
       ensureCounts();
       return Core.feedback(ids, 0, eng.U, idx * L, L, eng.feedbackRule, eng._counts, eng._pow3);
     };
@@ -152,7 +191,7 @@
     eng.feedbackDigits = function (guessRaw, secretRaw) {
       var guess = typeof guessRaw === 'string' ? Pack.parseWord(guessRaw, pack) : guessRaw;
       var secret = typeof secretRaw === 'string' ? Pack.parseWord(secretRaw, pack) : secretRaw;
-      return Pack.patToDigits(eng.pattern(guess, secret), L);
+      return Pack.patToDigits(eng.pattern(guess, secret), L, eng.clueBase);
     };
 
     eng.encode = function (raw) {
@@ -171,7 +210,7 @@
     eng.makeClue = function (raw, digits) {
       var g = eng.encode(raw);
       if (g.err) return g;
-      var pat = Pack.digitsToPat(digits);
+      var pat = Pack.digitsToPat(digits, eng.clueBase);
       var slots = digits.map(function (d) {
         var mark = null;
         (pack.clueAlphabet || []).forEach(function (m) { if (m.value === d) mark = m; });
@@ -201,12 +240,14 @@
 
     eng.wordleHardOk = function (idx, clues) {
       var base = idx * L, c, i, cl, need, ok;
+      var correct = eng.scoringHooks && eng.scoringHooks.correct ? eng.scoringHooks.correct : function (d) { return d === 2; };
+      var revealed = eng.scoringHooks && eng.scoringHooks.revealed ? eng.scoringHooks.revealed : function (d) { return d > 0; };
       for (c = 0; c < clues.length; c++) {
         cl = clues[c];
         need = new Map();
         for (i = 0; i < L; i++) {
-          if (cl.digits[i] === 2 && eng.U[base + i] !== cl.ids[i]) return false;
-          if (cl.digits[i] > 0) need.set(cl.ids[i], (need.get(cl.ids[i]) || 0) + 1);
+          if (correct(cl.digits[i]) && eng.U[base + i] !== cl.ids[i]) return false;
+          if (revealed(cl.digits[i])) need.set(cl.ids[i], (need.get(cl.ids[i]) || 0) + 1);
         }
         ok = true;
         need.forEach(function (n, s) {

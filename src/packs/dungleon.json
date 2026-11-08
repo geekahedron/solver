@@ -1,0 +1,31 @@
+{
+  "id": "dungleon",
+  "name": "Dungleon",
+  "note": "Entity dungeon. Known answers are the 397 unique official dungeons from the previous-solutions history (prevsolutions.txt): six malformed 6-character lines and two experimental cake-letter (k) entries are excluded, and duplicates are merged. Theoretical solutions are generated from the dungeon rules (slot alphabets, filters, frogging, zombification).",
+  "delimiter": "none",
+  "caseInsensitive": false,
+  "clueCaseSensitive": true,
+  "clueShape": "perSlot",
+  "clueAlphabet": [
+    { "id": "absent", "value": 0, "label": "r", "role": "absent", "paint": "b", "symbols": ["r"] },
+    { "id": "present", "value": 1, "label": "y", "role": "present", "paint": "y", "symbols": ["y"] },
+    { "id": "correct", "value": 2, "label": "g", "role": "correct", "paint": "g", "solve": true, "symbols": ["g"] },
+    { "id": "presentPlus", "value": 3, "label": "Y", "role": "present", "plus": true, "paint": "yp", "symbols": ["Y"] },
+    { "id": "correctPlus", "value": 4, "label": "G", "role": "correct", "plus": true, "paint": "gp", "symbols": ["G"] }
+  ],
+  "tokenRenderer": "tiles/dungleon",
+  "clueRenderer": "clues/wordle-gyb",
+  "feedback": "custom",
+  "rules": "script:rules/dungleon.js",
+  "guessMode": "any",
+  "alphabet": "WAMKVBSsDTNOowtFZCcR",
+  "pools": { "theoretical": "generated" },
+  "variants": [
+    {
+      "id": "dungleon",
+      "name": "Dungleon",
+      "length": 5,
+      "knownSolutions": "dungleon-prevsolutions.txt"
+    }
+  ]
+}
