@@ -1,7 +1,7 @@
 {
   "id": "dungleon",
   "name": "Dungleon",
-  "note": "Entity dungeon. Known answers are the published solutions list. Theoretical solutions are generated from the dungeon rules (slot alphabets, filters, frogging, zombification).",
+  "note": "Entity dungeon. Known answers are the 397 unique official dungeons from the previous-solutions history (prevsolutions.txt): six malformed 6-character lines and two experimental cake-letter (k) entries are excluded, and duplicates are merged. Theoretical solutions are generated from the dungeon rules (slot alphabets, filters, frogging, zombification).",
   "delimiter": "none",
   "caseInsensitive": false,
   "clueCaseSensitive": true,
@@ -25,7 +25,7 @@
       "id": "dungleon",
       "name": "Dungleon",
       "length": 5,
-      "knownSolutions": "dungleon-solutions.txt"
+      "knownSolutions": "dungleon-prevsolutions.txt"
     }
   ]
 }
