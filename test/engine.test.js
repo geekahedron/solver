@@ -228,6 +228,7 @@ check('english pack JSON is the current 4–8 lists', function () {
   assert.strictEqual(manifest.rules, 'builtin:wordle');
   assert.strictEqual(manifest.pools.theoretical, 'guessList');
   assert.strictEqual(manifest.clueShape, 'perSlot');
+  assert.deepStrictEqual(manifest.openers, ['slate', 'tarps', 'crane', 'cramp', 'trace', 'stare', 'crate', 'raise', 'alert', 'later']);
   assert.deepStrictEqual(manifest.variants.map(function (v) { return v.length; }), [4, 5, 6, 7, 8]);
 
   const sketch = JSON.parse(fs.readFileSync(path.join(root, 'src/packs/mastermind-sketch.json'), 'utf8'));
@@ -237,6 +238,11 @@ check('english pack JSON is the current 4–8 lists', function () {
 
   const variant = manifest.variants.filter(function (v) { return v.id === 'wordle-en-5'; })[0];
   const pack = Pack.normalize(manifest, variant);
+  assert.deepStrictEqual(pack.openers, manifest.openers);
+  const short = Pack.normalize(manifest, manifest.variants[0]);
+  assert.deepStrictEqual(short.openers, manifest.openers);
+  const replaced = Pack.normalize(manifest, Object.assign({}, variant, { openers: ['zz'] }));
+  assert.deepStrictEqual(replaced.openers, ['zz']);
   const answers = fs.readFileSync(path.join(root, 'src/packs', variant.knownSolutions), 'utf8');
   const guesses = fs.readFileSync(path.join(root, 'src/packs', variant.guessList), 'utf8');
   const eng = Engine.create(pack, { answers: answers, guesses: guesses });

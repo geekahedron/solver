@@ -6,6 +6,7 @@ const path = require('path');
 
 const root = path.join(__dirname, '..');
 const Core = require(path.join(root, 'src/core.js'));
+require(path.join(root, 'src/tree.js'));
 const Pack = require(path.join(root, 'src/pack.js'));
 const Engine = require(path.join(root, 'src/engine.js'));
 
@@ -127,6 +128,57 @@ const scored = Core.scorePool(eng.U, 5, eng.syms.length, 'wordle', rem, pool, is
 const collapsed = Core.scorePool(eng.U, 5, eng.syms.length, 'wordle', rem, pool, isCand);
 assert.strictEqual(scored[0].splits, 2);
 assert.strictEqual(collapsed[0].splits, 1);
+
+// Five-mark feedback changes the entropy. Wordle's 3-mark collapse puts
+// ACBBC and ACBBR in one bucket (0 bits). The pack marks split them (1 bit).
+const plusInfo = Core.rankByInformation({
+  U: eng.U, L: 5, K: eng.syms.length, rule: eng.feedbackRule,
+  rem: rem, pool: pool, hooks: eng.scoringHooks
+});
+const plusCollapsed = Core.rankByInformation({
+  U: eng.U, L: 5, K: eng.syms.length, rule: 'wordle',
+  rem: rem, pool: pool, hooks: null
+});
+assert.strictEqual(plusInfo.length, 1);
+assert.ok(Math.abs(plusInfo[0].ent - 1) < 1e-9, plusInfo[0].ent);
+assert.ok(Math.abs(plusCollapsed[0].ent) < 1e-9, plusCollapsed[0].ent);
+
+// No authored list: rank the 397 known solutions (the whole guess list at
+// the start of a game) by expected information. Case stays as stored.
+assert.ok(!manifest.openers || !manifest.openers.length);
+assert.deepStrictEqual(pack.openers, []);
+const knownIdx = Int32Array.from(eng.knownIdx);
+const opening = Core.rankByInformation({
+  U: eng.U, L: 5, K: eng.syms.length, rule: eng.feedbackRule,
+  rem: knownIdx, pool: knownIdx, hooks: eng.scoringHooks
+});
+assert.strictEqual(opening.length, 397);
+assert.strictEqual(eng.keys[opening[0].idx], 'AWSCw');
+assert.ok(opening[0].ent > opening[1].ent);
+assert.ok(opening[0].ent > 5.4 && opening[0].ent < 5.6, opening[0].ent);
+assert.ok(!eng.keyIdx.has('AWSCW'));
+assert.notStrictEqual(eng.encode('AWSCw').key, eng.encode('AWSCW').key);
+const generated = Core.chooseOpenerList({
+  declared: false,
+  scores: opening.map(function (s, i) {
+    return { word: eng.keys[s.idx], bits: s.ent, cand: s.cand, exp: s.exp, i: i };
+  })
+});
+assert.strictEqual(generated.source, 'generated');
+assert.strictEqual(generated.words.length, 10);
+assert.strictEqual(generated.words[0], 'AWSCw');
+const wordleOpeners = ['slate', 'tarps', 'crane', 'cramp', 'trace', 'stare', 'crate', 'raise', 'alert', 'later'];
+generated.words.forEach(function (word) {
+  assert.strictEqual(eng.encode(word).key, word, word);
+  assert.ok(eng.flags[eng.keyIdx.get(word)].known, word);
+  assert.ok(wordleOpeners.indexOf(word) < 0, word);
+});
+let prevBits = Infinity;
+generated.words.forEach(function (word) {
+  const row = opening.filter(function (s) { return eng.keys[s.idx] === word; })[0];
+  assert.ok(row.ent <= prevBits + 1e-9, word);
+  prevBits = row.ent;
+});
 
 const parts = eng.partition([plus]);
 // ACBBC matches rrYrr but is not in the previous-solutions list. ACBBR does not match.
