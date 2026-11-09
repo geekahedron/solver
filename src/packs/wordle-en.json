@@ -16,6 +16,7 @@
   "rules": "builtin:wordle",
   "alphabet": "abcdefghijklmnopqrstuvwxyz",
   "pools": { "theoretical": "guessList" },
+  "openers": ["slate", "tarps", "crane", "cramp", "trace", "stare", "crate", "raise", "alert", "later"],
   "variants": [
     {
       "id": "wordle-en-4",

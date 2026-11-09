@@ -64,6 +64,18 @@ async function waitStatus(page, re, timeout) {
     await page.waitForSelector('#treeScan');
     const help = await page.$eval('#treeScanHelp', el => el.textContent);
     assert(/SLATE, TARPS/.test(help) && /16 or fewer/.test(help) && /40 more/.test(help), 'help: ' + help);
+    const enPicks = await page.$$eval('#treePicks [data-pick]', els => els.map(e => e.getAttribute('data-pick')));
+    assert(enPicks.join(',') === 'slate,tarps,crane,cramp,trace,stare,crate,raise,alert,later', 'english picks ' + enPicks.join(','));
+    const enRows = await page.$$eval('#treeOpenerTable tbody tr', rows => rows.map(r => ({
+      word: r.getAttribute('data-word'),
+      bits: r.children[2].textContent
+    })));
+    assert(enRows.length === 10 && enRows[0].word === 'slate' && /^\d\.\d\d$/.test(enRows[0].bits), 'english bits ' + JSON.stringify(enRows));
+    const maxBits = Math.max.apply(null, enRows.map(r => parseFloat(r.bits)));
+    assert(maxBits > parseFloat(enRows[0].bits) + 0.01, 'english list should stay in pack order, not bits order');
+    const enNote = await page.$eval('#treeOpenerNote', el => el.textContent);
+    assert(/in that order/.test(enNote) && /expected information/.test(enNote), enNote);
+    await page.screenshot({ path: shotDir + '/scan-english-openers.png' });
 
     // Quick picks: SLATE before CRANE. n=1 exhausts; n=2 stops on SLATE.
     await page.select('#packSel', 'blank');
@@ -95,7 +107,9 @@ async function waitStatus(page, re, timeout) {
     assert(/max depth/.test(sum2) && /Every played answer finishes within n/.test(fam2), 'fit tree: ' + sum2 + ' / ' + fam2);
     await page.screenshot({ path: shotDir + '/scan-slate-fits.png' });
 
-    // Wordle hard: first answers miss n=3, dictionary probe XYW fits. n=4 stops at DEF.
+    // Custom pack, no authored openers. Starters are ranked by expected
+    // information, then the small-list continuation. Wordle hard: n=3 fits
+    // on XYW. n=4 stops at DEF, before that probe.
     await page.$eval('#cfgL', el => { el.value = '3'; });
     await page.$eval('#ansText', (el, v) => { el.value = v; }, TRAP_A.join('\n'));
     await page.$eval('#guessText', (el, v) => { el.value = v; }, TRAP_G.join('\n'));
@@ -154,6 +168,46 @@ async function waitStatus(page, re, timeout) {
     const scanLabel = await page.$eval('#treeScan', el => el.textContent);
     assert(scanLabel === 'Scan openers', 'button during finished build: ' + scanLabel);
     await page.screenshot({ path: shotDir + '/scan-english-hard.png' });
+
+    // 4-letter English inherits the 5-letter opener list and keeps none of them.
+    await page.select('#packSel', 'en4');
+    await page.waitForFunction(() => /1[,.]?500/.test(document.getElementById('remCount').textContent), { timeout: 30000 });
+    await page.click('#pageModes button[data-page="tree"]');
+    const picks4 = await page.$$eval('#treePicks [data-pick]', els => els.map(e => e.getAttribute('data-pick')));
+    assert(picks4.length === 0, 'en4 picks ' + picks4.join(','));
+    const note4 = await page.$eval('#treeOpenerNote', el => el.textContent);
+    assert(/none of them are legal/.test(note4), note4);
+
+    // Dungleon has no authored list. Quick picks are real dungeon guesses,
+    // ranked by expected information, and Scan openers reports those bits.
+    await page.select('#packSel', 'dungleon');
+    await page.waitForFunction(() => /397/.test(document.getElementById('remCount').textContent), { timeout: 30000 });
+    await page.click('#pageModes button[data-page="tree"]');
+    const dungPicks = await page.$$eval('#treePicks [data-pick]', els => els.map(e => e.getAttribute('data-pick')));
+    assert(dungPicks.length === 10, 'dungleon picks ' + dungPicks.join(','));
+    assert(dungPicks[0] === 'AWSCw', 'dungleon top ' + dungPicks[0]);
+    assert(dungPicks.indexOf('slate') < 0 && dungPicks.indexOf('tarps') < 0, 'wordle openers on dungleon');
+    assert(/[A-Z]/.test(dungPicks[0]) && /[a-z]/.test(dungPicks[0]), 'dungleon case ' + dungPicks[0]);
+    const dungRows = await page.$$eval('#treeOpenerTable tbody tr', rows => rows.map(r => ({
+      word: r.getAttribute('data-word'),
+      bits: r.children[2].textContent
+    })));
+    assert(dungRows.length === 10 && dungRows[0].word === 'AWSCw', JSON.stringify(dungRows[0]));
+    for (let i = 1; i < dungRows.length; i++) {
+      assert(parseFloat(dungRows[i].bits) <= parseFloat(dungRows[i - 1].bits) + 1e-9, 'bits order ' + JSON.stringify(dungRows));
+    }
+    const dungNote = await page.$eval('#treeOpenerNote', el => el.textContent);
+    assert(/no opener list/.test(dungNote) && /expected information/.test(dungNote), dungNote);
+    await page.select('#treeHard', 'off');
+    await page.select('#treePolicy', 'worst');
+    await page.$eval('#treeBudget', el => { el.value = '6'; el.dispatchEvent(new Event('change', { bubbles: true })); });
+    await page.click('#treeScan');
+    st = await waitStatus(page, /Trying/);
+    assert(/AWSCw/.test(st) && /bits/.test(st) && /1\/10/.test(st), 'dungleon scan ' + st);
+    await page.click('#treeScan');
+    st = await page.$eval('#treeStatus', el => el.textContent);
+    assert(/Scan stopped/.test(st), 'dungleon stop ' + st);
+    await page.screenshot({ path: shotDir + '/scan-dungleon-openers.png' });
 
     // Mobile: controls stay on screen and a tiny scan still completes.
     const mobile = await browser.newPage();

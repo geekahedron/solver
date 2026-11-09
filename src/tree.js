@@ -17,6 +17,12 @@
  * the browser; that tree is marked approximate.
  *
  * planOpenerScan orders the starters the Tree page tries until one strategyFits.
+ *
+ * Expected information for an opener is the entropy of the feedback-pattern
+ * buckets from Analysis scorePool, using the pack's own marks:
+ *   I(g) = -sum (n_i / N) * log2(n_i / N)
+ * chooseOpenerList keeps an authored pack list in that order. With no authored
+ * list it keeps the top OPENER_GENERATED_CAP candidates by that entropy.
  */
 (function (root) {
   'use strict';
@@ -796,12 +802,99 @@
     return { summary: summary, depths: depths, root: rootNode, allGreen: allGreen };
   };
 
+  // How many starters to invent when a pack does not author an opener list.
+  // Matches the English Wordle quick-pick count.
+  Core.OPENER_GENERATED_CAP = 10;
+
+  // |candidates| × |answers| past this keeps a prefix of the candidate list.
+  // 397 Dungleon solutions scored against themselves sit under it. A generated
+  // theoretical pool scored against itself does not, and is cut instead of
+  // hanging the page.
+  Core.OPENER_SCORE_CELLS = 1500000;
+
+  // I(g) in bits: entropy of the feedback-pattern buckets when g is scored
+  // against rem. Reuses Analysis scorePool (score.ent), including the pack
+  // feedback in spec.hooks. All-green is one of the buckets. Best first.
+  Core.rankByInformation = function (spec) {
+    spec = spec || {};
+    var U = spec.U;
+    var L = spec.L | 0;
+    var rem = spec.rem;
+    var pool = spec.pool;
+    if (!U || L < 1 || !rem || !rem.length || !pool || !pool.length) return [];
+    var nWords = Math.max(1, (U.length / L) | 0);
+    var isCand = new Uint8Array(nWords);
+    var i, ri;
+    for (i = 0; i < rem.length; i++) {
+      ri = rem[i] | 0;
+      if (ri >= 0 && ri < nWords) isCand[ri] = 1;
+    }
+    var scores = Core.scorePool(U, L, spec.K | 0, spec.rule || 'wordle', rem, pool, isCand, null, spec.hooks);
+    scores.sort(Core.sorters.entropy);
+    return scores;
+  };
+
+  // Keep a prefix of candidates when scoring every one against every answer
+  // would exceed maxCells. Candidates are already in keep-first order.
+  // answerCount < 1 returns the list unchanged (there is nothing to score).
+  Core.boundOpenerCandidates = function (candidates, answerCount, maxCells) {
+    var list = [];
+    var i;
+    candidates = candidates || [];
+    for (i = 0; i < candidates.length; i++) list.push(candidates[i]);
+    var n = answerCount | 0;
+    if (n < 1) return list;
+    var cells = maxCells == null ? Core.OPENER_SCORE_CELLS : maxCells;
+    var cap = Math.floor(cells / n);
+    if (cap < 1) cap = 1;
+    if (list.length <= cap) return list;
+    return list.slice(0, cap);
+  };
+
+  // Authored pack openers stay in authored order. Otherwise take the top
+  // `limit` scores by expected information (bits, then still-possible, then
+  // lower expected remaining, then the candidate index the caller stored).
+  // spec.declared is true when the pack named an opener list, even if every
+  // word was filtered out of this variant. That does not fall through to
+  // generation. spec.scores is [{ word, bits, cand, exp, i }].
+  Core.chooseOpenerList = function (spec) {
+    spec = spec || {};
+    var limit = spec.limit == null ? Core.OPENER_GENERATED_CAP : spec.limit | 0;
+    if (limit < 0) limit = 0;
+    if (spec.declared) {
+      return { words: (spec.authored || []).slice(), source: 'pack', capped: false };
+    }
+    var ranked = (spec.scores || []).map(function (s, n) {
+      return {
+        word: s.word,
+        bits: s.bits || 0,
+        cand: s.cand || 0,
+        exp: s.exp || 0,
+        i: s.i == null ? n : s.i
+      };
+    });
+    ranked.sort(function (a, b) {
+      return (b.bits - a.bits) || (b.cand - a.cand) || (a.exp - b.exp) || (a.i - b.i);
+    });
+    var words = [];
+    var seen = {};
+    var i;
+    for (i = 0; i < ranked.length && words.length < limit; i++) {
+      if (!ranked[i].word || seen[ranked[i].word]) continue;
+      seen[ranked[i].word] = 1;
+      words.push(ranked[i].word);
+    }
+    return { words: words, source: 'generated', capped: !!spec.capped };
+  };
+
   // Order for "try starters until one fits n".
   // picks: spec.openers that pass spec.has, original order, duplicates skipped.
-  // When the remaining list is non-empty and no longer than extraMaxRemaining,
-  // extras continue with spec.remaining, then spec.dict, skipping anything
-  // already queued, up to extraCap further words. The caller decides what
-  // dict means (probes before answers already ruled out, for the Tree page).
+  // The caller passes the pack's opener list, or the generated list when the
+  // pack did not author one. When the remaining list is non-empty and no longer
+  // than extraMaxRemaining, extras continue with spec.remaining, then spec.dict,
+  // skipping anything already queued, up to extraCap further words. The caller
+  // decides what dict means (probes before answers already ruled out, for the
+  // Tree page).
   Core.planOpenerScan = function (spec) {
     spec = spec || {};
     var openers = spec.openers || [];

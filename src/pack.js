@@ -59,6 +59,18 @@
     return map;
   }
 
+  function copyOpeners(list) {
+    if (!list || !list.length) return [];
+    var out = [];
+    var i, w;
+    for (i = 0; i < list.length; i++) {
+      if (list[i] == null) continue;
+      w = String(list[i]).trim();
+      if (w) out.push(w);
+    }
+    return out;
+  }
+
   function finish(pack) {
     if (!pack.clueAlphabet || !pack.clueAlphabet.length) pack.clueAlphabet = defaultClueAlphabet();
     pack.lists = pack.lists || { theoretical: 'guessList' };
@@ -93,7 +105,10 @@
         knownSolutions: variant.knownSolutions || null,
         guessList: variant.guessList || null,
         theoretical: (manifest.pools && manifest.pools.theoretical) || 'guessList'
-      }
+      },
+      // A variant array replaces the manifest list. Missing means inherit.
+      // Empty means this variant authors none, so the page may generate.
+      openers: copyOpeners(variant.openers != null ? variant.openers : manifest.openers)
     };
     return finish(pack);
   };
@@ -117,6 +132,7 @@
       rules: opts.rules || 'builtin:wordle',
       status: 'ready',
       lists: { theoretical: opts.theoretical || 'guessList' },
+      openers: copyOpeners(opts.openers),
       rulesImpl: opts.rulesImpl || null
     };
     return finish(pack);

@@ -361,6 +361,83 @@ check('opener scan does not walk the dictionary when the list is long', function
   assert.deepStrictEqual(plan.all, ['slate', 'tarps']);
 });
 
+check('expected information is the entropy of feedback buckets', function () {
+  const eng = packOf(['aa', 'ab', 'ba'], ['cc']);
+  const rem = Int32Array.from(eng.knownIdx);
+  const pool = Int32Array.from([eng.keyIdx.get('aa'), eng.keyIdx.get('cc')]);
+  const scores = Core.rankByInformation({
+    U: eng.U, L: 2, K: eng.syms.length, rule: 'wordle', rem: rem, pool: pool
+  });
+  const by = {};
+  scores.forEach(function (s) { by[eng.keys[s.idx]] = s.ent; });
+  // aa separates all three answers. cc leaves one gray bucket.
+  assert.ok(Math.abs(by.aa - Math.log2(3)) < 1e-9, by.aa);
+  assert.ok(Math.abs(by.cc) < 1e-12, by.cc);
+  assert.ok(by.aa > by.cc);
+});
+
+check('tied information keeps the earlier candidate', function () {
+  const eng = packOf(['slate', 'crane'], []);
+  const rem = Int32Array.from(eng.knownIdx);
+  const pool = Int32Array.from(eng.knownIdx);
+  const scores = Core.rankByInformation({
+    U: eng.U, L: 5, K: eng.syms.length, rule: 'wordle', rem: rem, pool: pool
+  });
+  const chosen = Core.chooseOpenerList({
+    declared: false,
+    scores: scores.map(function (s) {
+      return {
+        word: eng.keys[s.idx],
+        bits: s.ent,
+        cand: s.cand,
+        exp: s.exp,
+        i: Array.prototype.indexOf.call(pool, s.idx)
+      };
+    })
+  });
+  assert.strictEqual(chosen.source, 'generated');
+  assert.deepStrictEqual(chosen.words, ['slate', 'crane']);
+  scores.forEach(function (s) { assert.ok(Math.abs(s.ent - 1) < 1e-9, s.ent); });
+});
+
+check('an authored opener list keeps its order', function () {
+  const chosen = Core.chooseOpenerList({
+    declared: true,
+    authored: ['slate', 'tarps', 'crane'],
+    scores: [
+      { word: 'crane', bits: 9, cand: 1, exp: 1, i: 0 },
+      { word: 'slate', bits: 1, cand: 1, exp: 1, i: 1 }
+    ]
+  });
+  assert.deepStrictEqual(chosen.words, ['slate', 'tarps', 'crane']);
+  assert.strictEqual(chosen.source, 'pack');
+  const generated = Core.chooseOpenerList({
+    declared: false,
+    scores: [
+      { word: 'low', bits: 0.2, i: 0 },
+      { word: 'high', bits: 3, i: 1 },
+      { word: 'mid', bits: 1, i: 2 },
+      { word: 'also', bits: 0.4, i: 3 }
+    ],
+    limit: 2
+  });
+  assert.deepStrictEqual(generated.words, ['high', 'mid']);
+  assert.strictEqual(generated.source, 'generated');
+  const emptyAuthored = Core.chooseOpenerList({
+    declared: true,
+    authored: [],
+    scores: [{ word: 'high', bits: 3, i: 0 }]
+  });
+  assert.deepStrictEqual(emptyAuthored.words, []);
+  assert.strictEqual(emptyAuthored.source, 'pack');
+});
+
+check('opener candidates are capped by the score budget', function () {
+  assert.deepStrictEqual(Core.boundOpenerCandidates(['a', 'b', 'c', 'd'], 10, 25), ['a', 'b']);
+  assert.deepStrictEqual(Core.boundOpenerCandidates(['a', 'b'], 397, Core.OPENER_SCORE_CELLS), ['a', 'b']);
+  assert.strictEqual(Core.OPENER_GENERATED_CAP, 10);
+});
+
 check('opener scan caps the extra starters', function () {
   const plan = Core.planOpenerScan({
     openers: [],

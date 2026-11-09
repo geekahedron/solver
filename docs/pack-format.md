@@ -36,6 +36,7 @@ Case folding (`caseInsensitive`) happens before the split, and only for I/O.
   "rules": "builtin:wordle",
   "alphabet": "abcdefghijklmnopqrstuvwxyz",
   "pools": { "theoretical": "guessList" },
+  "openers": ["slate", "tarps", "crane"],
   "variants": [
     {
       "id": "wordle-en-5",
@@ -51,6 +52,24 @@ Case folding (`caseInsensitive`) happens before the split, and only for I/O.
 `alphabet` is a string of code points when `delimiter` is `none`, or an array of tokens (`["1","2","3"]`) otherwise. An empty alphabet allows any token.
 
 List paths are relative to `src/packs/`. `knownSolutions` is the published answer list. `guessList` is every allowed guess (for English, that file already includes the answers; duplicates are merged).
+
+`openers` is an optional list of starter guesses. It may sit on the manifest or on one variant. A variant array replaces the manifest list. Omitting it inherits the manifest list. `[]` means that variant authors none.
+
+The Tree quick picks and Scan openers use that list, in that order, after dropping any word that is not a legal guess in the loaded lists. Case follows the pack. English folds case. Dungleon keeps it.
+
+English Wordle authors `slate`, `tarps`, `crane`, `cramp`, `trace`, `stare`, `crate`, `raise`, `alert`, `later`. Other lengths inherit those words and then drop every one that is not in the loaded lists, so a 4-letter game does not invent a different top ten.
+
+When `openers` is missing or empty, the page ranks a bounded candidate set by expected information and keeps the top 10. The information of a guess is the entropy of the feedback patterns it produces on the answers still being solved:
+
+```text
+I(g) = −∑ (nᵢ / N) log₂(nᵢ / N)
+```
+
+`nᵢ` is the size of one feedback bucket and `N` is the number of answers still possible. The buckets are Analysis `scorePool` (`score.ent`) with the pack’s own feedback, so Dungleon’s five marks stay five marks. The known layer is used when that is the layer being solved. Otherwise the active remaining set is used.
+
+Candidates, kept from the front when the score is capped, are the pack’s guess list, any authored openers already in the universe, then the answers still possible. The page does not expand alphabet^length. Dungleon allows any 5-token guess, and 20^5 is not a candidate set. With no separate guess file the known solutions are the candidates. A product of candidates × answers above 1,500,000 keeps a prefix of that list so the page does not hang.
+
+Scan openers shows this entropy in a Bits column. When 16 or fewer answers remain it still continues with those answers, then other listed guesses, up to 40 more, after the opener list.
 
 `pools.theoretical`:
 

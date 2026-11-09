@@ -39,8 +39,13 @@
   var worker = null, reqId = 0, scoreTimer = null;
   var treeWorker = null, treeReq = 0, treeResult = null, treeSig = '', treePath = [], treeOnlyOver = false, treeListOpen = false;
   var treeQueue = null, treeFlushToken = 0, scanJob = null;
-  var TREE_OPENERS = ['slate', 'tarps', 'crane', 'cramp', 'trace', 'stare', 'crate', 'raise', 'alert', 'later'];
   var SCAN_EXTRA_MAX_REM = 16, SCAN_EXTRA_CAP = 40;
+  var openerWords = [];
+  var openerBits = Object.create(null);
+  var openerSource = 'pack';
+  var openerCapped = false;
+  var openerPackSeen = -1;
+  var scanMarks = Object.create(null);
 
   function inferGuessMode() {
     if (cfg.ansOnly) return 'answersOnly';
@@ -438,6 +443,7 @@
     $('bdRows').innerHTML = ''; $('bdSummary').textContent = ''; $('bdTitle').textContent = '';
     $('bdGuess').value = ''; delete $('bdRows').dataset.guess;
     scheduleScore();
+    refreshOpeners();
     saveState();
   }
 
@@ -483,7 +489,6 @@
     $('packMsg').textContent = msg;
     $('packSummary').textContent = ($('packSel').selectedOptions[0] || {}).textContent + ' · ' + engine.nKnown.toLocaleString() + ' answers';
     dropTree();
-    fillTreeOpeners();
     cfg.L = engine.pack.length;
     if (!keepClues) clues = [];
     else clues = clues.map(function (c) {
@@ -744,19 +749,201 @@
       stopScan('Scan stopped because the settings or clues changed.');
     }
   }
-  function fillTreeOpeners() {
+  function packDeclaredOpeners() {
+    return !!(engine && engine.pack && engine.pack.openers && engine.pack.openers.length);
+  }
+  function legalAuthoredOpeners() {
+    var list = (engine.pack && engine.pack.openers) || [];
+    var out = [];
+    var seen = Object.create(null);
+    var i, enc;
+    for (i = 0; i < list.length; i++) {
+      enc = engine.encode(list[i]);
+      if (!enc || enc.err || !engine.keyIdx.has(enc.key) || seen[enc.key]) continue;
+      seen[enc.key] = 1;
+      out.push(enc.key);
+    }
+    return out;
+  }
+  // Candidates for a generated opener list. Never alphabet^length
+  // (Dungleon guessMode "any" is about 20^5). Keep, in this order:
+  // the pack's guess list, authored openers already in the universe,
+  // then answers still in the set being solved. A pack with no guess
+  // list therefore ranks remaining solutions. Past OPENER_SCORE_CELLS
+  // (|candidates| × |answers|) keep a prefix so a large pool cannot hang.
+  function openerCandidateIdx() {
+    var seen = new Uint8Array(engine.nWords);
+    var out = [];
+    function add(idx) {
+      idx = idx | 0;
+      if (idx < 0 || idx >= engine.nWords || seen[idx]) return;
+      seen[idx] = 1;
+      out.push(idx);
+    }
+    var i, g = engine.guessIdx || [];
+    for (i = 0; i < g.length; i++) add(g[i]);
+    var authored = (engine.pack && engine.pack.openers) || [];
+    for (i = 0; i < authored.length; i++) {
+      var enc = engine.encode(authored[i]);
+      if (enc && !enc.err && engine.keyIdx.has(enc.key)) add(engine.keyIdx.get(enc.key));
+    }
+    for (i = 0; i < remaining.length; i++) add(remaining[i]);
+    var bounded = Core.boundOpenerCandidates(out, remaining.length, Core.OPENER_SCORE_CELLS);
+    return { idx: bounded, capped: bounded.length < out.length };
+  }
+  function informationScores(indices) {
+    if (!indices || !indices.length || !remaining.length) return [];
+    return Core.rankByInformation({
+      U: engine.U,
+      L: cfg.L,
+      K: engine.syms.length,
+      rule: engine.feedbackRule,
+      rem: Int32Array.from(remaining),
+      pool: Int32Array.from(indices),
+      hooks: engine.scoringHooks
+    });
+  }
+  function rememberBits(scores, orderOf) {
+    var i, s, word;
+    for (i = 0; i < scores.length; i++) {
+      s = scores[i];
+      word = engine.keys[s.idx];
+      openerBits[word] = s.ent;
+      if (orderOf && orderOf[s.idx] == null) orderOf[s.idx] = i;
+    }
+  }
+  function scoreRecords(scores, orderOf) {
+    var out = [];
+    var i, s;
+    for (i = 0; i < scores.length; i++) {
+      s = scores[i];
+      out.push({
+        word: engine.keys[s.idx],
+        bits: s.ent,
+        cand: s.cand,
+        exp: s.exp,
+        i: orderOf && orderOf[s.idx] != null ? orderOf[s.idx] : i
+      });
+    }
+    return out;
+  }
+  function refreshOpeners() {
     if (!$('treePicks') || !engine) return;
-    var have = [];
-    TREE_OPENERS.forEach(function (w) { if (engine.keyIdx.has(w)) have.push(w); });
-    $('treePicks').innerHTML = have.map(function (w) {
-      return '<button type="button" class="ghost mini" data-pick="' + esc(w) + '">' + esc(showWord(w)) + '</button>';
-    }).join('');
-    $('treeOpenerList').innerHTML = have.map(function (w) {
-      return '<option value="' + esc(w) + '"></option>';
-    }).join('');
+    scanMarks = Object.create(null);
+    openerBits = Object.create(null);
+    var declared = packDeclaredOpeners();
+    var authored = legalAuthoredOpeners();
+    var scores = [];
+    var orderOf = Object.create(null);
+    openerCapped = false;
+    if (remaining.length) {
+      if (declared) {
+        var ai, aidx = [];
+        for (ai = 0; ai < authored.length; ai++) {
+          aidx.push(engine.keyIdx.get(authored[ai]));
+          orderOf[aidx[ai]] = ai;
+        }
+        scores = informationScores(aidx);
+      } else {
+        var cands = openerCandidateIdx();
+        openerCapped = cands.capped;
+        var ci;
+        for (ci = 0; ci < cands.idx.length; ci++) orderOf[cands.idx[ci]] = ci;
+        scores = informationScores(cands.idx);
+      }
+      rememberBits(scores, orderOf);
+    }
+    var chosen = Core.chooseOpenerList({
+      declared: declared,
+      authored: authored,
+      scores: scoreRecords(scores, orderOf),
+      capped: openerCapped,
+      limit: Core.OPENER_GENERATED_CAP
+    });
+    openerWords = chosen.words;
+    openerSource = chosen.source;
+    openerCapped = chosen.capped;
+    renderOpenerPicks();
+    renderOpenerTable(openerWords);
+    renderOpenerNote();
     var cur = ($('treeOpener').value || '').trim();
     var enc = cur ? engine.encode(cur) : null;
-    if (!cur || (enc && enc.err)) $('treeOpener').value = have[0] || '';
+    var packChanged = openerPackSeen !== packGen;
+    openerPackSeen = packGen;
+    if (!cur || (enc && enc.err) || (packChanged && enc && !engine.keyIdx.has(enc.key))) {
+      $('treeOpener').value = openerWords[0] || '';
+    }
+  }
+  function renderOpenerPicks() {
+    if (!$('treePicks')) return;
+    $('treePicks').innerHTML = openerWords.map(function (w) {
+      return '<button type="button" class="ghost mini" data-pick="' + esc(w) + '">' + esc(showWord(w)) + '</button>';
+    }).join('');
+    if ($('treeOpenerList')) {
+      $('treeOpenerList').innerHTML = openerWords.map(function (w) {
+        return '<option value="' + esc(w) + '"></option>';
+      }).join('');
+    }
+  }
+  function bitsCell(word) {
+    var b = openerBits[word];
+    if (b == null || b !== b) return '–';
+    return fmt(b, 2);
+  }
+  function renderOpenerTable(words) {
+    var table = $('treeOpenerTable');
+    var wrap = $('treeOpenerWrap');
+    if (!table || !table.tBodies[0]) return;
+    if (wrap) wrap.hidden = !words.length;
+    table.tBodies[0].innerHTML = words.map(function (w, i) {
+      var mark = scanMarks[w] || '–';
+      return '<tr data-word="' + esc(w) + '"><td>' + (i + 1) + '</td><td>' + esc(w) +
+        '</td><td>' + bitsCell(w) + '</td><td class="scan-mark">' + esc(mark) + '</td></tr>';
+    }).join('');
+  }
+  function renderOpenerNote() {
+    var el = $('treeOpenerNote');
+    if (!el) return;
+    var n = remaining.length;
+    var metric = 'Bits are expected information against the ' + n.toLocaleString() +
+      ' answers still possible: −∑ p log₂ p over the feedback patterns this pack would return. That is the same partition Analysis uses for its Bits column.';
+    if (openerSource === 'pack') {
+      el.textContent = openerWords.length
+        ? 'Openers come from this pack’s list, in that order. ' + metric
+        : 'This pack lists openers, and none of them are legal guesses at this length. ' + metric;
+      return;
+    }
+    var capNote = openerCapped ? ' The candidate list was capped so a large pool would not hang the page.' : '';
+    el.textContent = openerWords.length
+      ? 'This pack has no opener list. These ' + openerWords.length +
+        ' starters are the highest-information guesses among the pack’s guess list and the answers still possible.' +
+        capNote + ' ' + metric
+      : 'This pack has no opener list and no candidates to rank.' + capNote;
+  }
+  function setOpenerMark(word, text) {
+    scanMarks[word] = text;
+    var table = $('treeOpenerTable');
+    if (!table || !table.tBodies[0]) return;
+    var rows = table.tBodies[0].rows;
+    var i, row;
+    for (i = 0; i < rows.length; i++) {
+      row = rows[i];
+      row.classList.toggle('scanning', row.getAttribute('data-word') === word && text === 'trying');
+      if (row.getAttribute('data-word') === word) {
+        var cell = row.querySelector('.scan-mark');
+        if (cell) cell.textContent = text;
+      }
+    }
+  }
+  function attachMissingBits(words) {
+    var missing = [];
+    var i;
+    for (i = 0; i < words.length; i++) {
+      if (openerBits[words[i]] == null && engine.keyIdx.has(words[i])) missing.push(engine.keyIdx.get(words[i]));
+    }
+    if (!missing.length) return;
+    var scores = informationScores(missing);
+    rememberBits(scores, null);
   }
   function haltTreeWork() {
     treeReq++;
@@ -1098,7 +1285,7 @@
       dictWords = probes.concat(ruledOut);
     }
     return Core.planOpenerScan({
-      openers: TREE_OPENERS,
+      openers: openerWords,
       has: function (w) { return engine.keyIdx.has(w); },
       remaining: remWords,
       dict: dictWords,
@@ -1258,11 +1445,24 @@
     renderTree();
     markTreeStale();
   }
+  function clearTryingMarks() {
+    var word, table, rows, i, cell;
+    for (word in scanMarks) if (scanMarks[word] === 'trying') scanMarks[word] = 'stopped';
+    table = $('treeOpenerTable');
+    if (!table || !table.tBodies[0]) return;
+    rows = table.tBodies[0].rows;
+    for (i = 0; i < rows.length; i++) {
+      rows[i].classList.remove('scanning');
+      cell = rows[i].querySelector('.scan-mark');
+      if (cell && cell.textContent === 'trying') cell.textContent = 'stopped';
+    }
+  }
   function stopScan(reason) {
     var job = scanJob;
     scanJob = null;
     setScanRunning(false);
     haltTreeWork();
+    clearTryingMarks();
     if (!$('treeStatus')) return;
     if (job && (job.best || job.last)) showFinishedTree(job.best || job.last);
     else markActivePick(treeOpenerValue());
@@ -1339,7 +1539,10 @@
       setScanRunning(false);
       return;
     }
-    $('treeStatus').innerHTML = 'Trying <b>' + esc(showWord(enc.key)) + '</b>… ' +
+    setOpenerMark(enc.key, 'trying');
+    var bitLabel = bitsCell(enc.key);
+    $('treeStatus').innerHTML = 'Trying <b>' + esc(showWord(enc.key)) + '</b>' +
+      (bitLabel === '–' ? '' : ' · ' + esc(bitLabel) + ' bits') + '… ' +
       (job.i + 1) + '/' + job.plan.all.length +
       '<div class="bar"><i id="treeBar"></i></div>';
     dispatchTree(id, msg, function (tree, ms) {
@@ -1359,9 +1562,13 @@
           job.best = hit;
         }
         if (tree.summary.strategyFits) {
+          setOpenerMark(enc.key, 'fits');
           showScanFit(hit);
           return;
         }
+        if (tree.summary.truncated) setOpenerMark(enc.key, 'cut off');
+        else if (tree.summary.playedOut && tree.summary.maxDepth != null) setOpenerMark(enc.key, 'max ' + tree.summary.maxDepth);
+        else setOpenerMark(enc.key, 'unproved');
       }
       setTimeout(function () { if (scanJob === job) stepScan(); }, 0);
     }, function (err) {
@@ -1394,12 +1601,20 @@
     }
     var plan = openerScanPlan();
     if (!plan.all.length) {
-      var why = !plan.continued
-        ? 'None of the quick-pick starters are in this pack. ' + remaining.length + ' answers are left, so further openers are not scanned.'
-        : 'No starters to try on this list.';
+      var why;
+      if (!plan.continued && openerSource === 'pack') {
+        why = 'None of the quick-pick starters are in this pack. ' + remaining.length + ' answers are left, so further openers are not scanned.';
+      } else if (!plan.continued) {
+        why = 'No opener candidates to scan. ' + remaining.length + ' answers are left, so further openers are not scanned.';
+      } else {
+        why = 'No starters to try on this list.';
+      }
       $('treeStatus').textContent = why;
       return;
     }
+    attachMissingBits(plan.all);
+    scanMarks = Object.create(null);
+    renderOpenerTable(plan.all);
     var snap;
     try { snap = takeTreeSnap(); }
     catch (err) {
