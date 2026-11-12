@@ -22,17 +22,146 @@
     return ['b', 'y', 'g'][digit] || 'b';
   }
 
+  function httpUrl(value) {
+    if (typeof value !== 'string' || !value || value.length > 2000) return false;
+    if (/[\u0000-\u001f\u007f<>"'\\\s]/.test(value)) return false;
+    return /^https?:\/\//i.test(value);
+  }
+
+  function entityOf(sym, opts) {
+    var app = opts && opts.appearance;
+    if (!app || !app.entities || sym == null || sym === '') return null;
+    return app.entities[sym] || null;
+  }
+
+  function entityLabel(sym, ent) {
+    if (ent && ent.label) return ent.label;
+    if (ent && ent.title) return ent.title;
+    return sym == null ? '' : String(sym);
+  }
+
+  function entityTitle(sym, ent) {
+    var label = entityLabel(sym, ent);
+    var title = (ent && ent.title) || label;
+    if (sym && title && title !== sym) return title + ' (' + sym + ')';
+    return title || (sym == null ? '' : String(sym));
+  }
+
+  function spriteCell(sprite, columns) {
+    if (!sprite || !columns || columns < 1) return null;
+    if (typeof sprite.index === 'number' && isFinite(sprite.index)) {
+      var index = Math.floor(sprite.index);
+      if (index < 0) return null;
+      return { col: index % columns, row: Math.floor(index / columns) };
+    }
+    if (typeof sprite.x === 'number' && typeof sprite.y === 'number' && isFinite(sprite.x) && isFinite(sprite.y)) {
+      if (sprite.x < 0 || sprite.y < 0) return null;
+      return { col: sprite.x, row: sprite.y };
+    }
+    return null;
+  }
+
+  // Sprite sheet for small keys and lists. Big image for clue tiles.
+  // A missing picture leaves the letter in the tile; the page hides it
+  // until the image errors.
+  function pickArt(sym, opts) {
+    if (!opts || opts.showImages === false || !sym) return null;
+    var ent = entityOf(sym, opts);
+    if (!ent) return null;
+    var sheet = opts.appearance && opts.appearance.sheet;
+    var want = opts.art || 'image';
+    var spriteOk = !!(ent.sprite && sheet && httpUrl(sheet.url) && spriteCell(ent.sprite, sheet.columns));
+    var imageOk = !!(ent.image && httpUrl(ent.image));
+    if (want === 'sprite') {
+      if (spriteOk) return { kind: 'sprite', ent: ent };
+      if (imageOk) return { kind: 'image', ent: ent };
+    } else {
+      if (imageOk) return { kind: 'image', ent: ent };
+      if (spriteOk) return { kind: 'sprite', ent: ent };
+    }
+    if (ent.label || ent.title) return { kind: 'label', ent: ent };
+    return null;
+  }
+
+  function spriteHTML(ent, sheet) {
+    var cell = spriteCell(ent.sprite, sheet.columns);
+    if (!cell) return '';
+    var cols = Math.floor(sheet.columns);
+    var col = Math.floor(cell.col);
+    var row = Math.floor(cell.row);
+    return '<span class="entity-sprite" style="--col:' + col + ';--row:' + row + ';--cols:' + cols + '">' +
+      '<img class="entity-img" alt="" src="' + esc(sheet.url) + '"></span>';
+  }
+
+  function imageHTML(ent, alt) {
+    return '<img class="entity-img entity-photo" alt="' + esc(alt) + '" src="' + esc(ent.image) + '">';
+  }
+
+  function artInner(sym, art, opts) {
+    if (!art || art.kind === 'label') return esc(sym);
+    var label = entityLabel(sym, art.ent);
+    var face = art.kind === 'sprite' ? spriteHTML(art.ent, opts.appearance.sheet) : imageHTML(art.ent, label);
+    if (!face) return esc(sym);
+    return face + '<span class="entity-letter" aria-hidden="true">' + esc(sym) + '</span>';
+  }
+
   function renderTiles(className) {
     return function (syms, digits, opts) {
       opts = opts || {};
       var html = '<span class="tiles ' + className + '">';
       for (var i = 0; i < syms.length; i++) {
+        var sym = syms[i] || '';
         var paint = digits ? paintClass(digits[i], opts) : 'e';
         var attr = opts.interactive ? ' data-i="' + i + '"' : '';
-        html += '<span class="tile ' + paint + '"' + attr + '>' + esc(syms[i] || '·') + '</span>';
+        var art = sym ? pickArt(sym, opts) : null;
+        var title = '';
+        var aria = '';
+        if (art) {
+          var named = entityTitle(sym, art.ent);
+          title = ' title="' + esc(named) + '"';
+          aria = ' aria-label="' + esc(named) + '"';
+        }
+        var inner = sym ? artInner(sym, art, opts) : '·';
+        html += '<span class="tile ' + paint + '"' + attr + title + aria + '>' + inner + '</span>';
       }
       return html + '</span>';
     };
+  }
+
+  function wordArt(tokens, opts) {
+    opts = opts || {};
+    var local = {};
+    var k;
+    for (k in opts) if (Object.prototype.hasOwnProperty.call(opts, k)) local[k] = opts[k];
+    local.art = opts.art || 'sprite';
+    var names = [];
+    var html = '<span class="word-art"' + (opts.title ? ' title="' + esc(opts.title) + '"' : '') + '>';
+    for (var i = 0; i < tokens.length; i++) {
+      var sym = tokens[i];
+      var art = pickArt(sym, local);
+      names.push(art ? entityLabel(sym, art.ent) : String(sym));
+      if (!art || art.kind === 'label') {
+        html += '<span class="mini-tile">' + esc(sym) + '</span>';
+        continue;
+      }
+      html += '<span class="mini-tile" title="' + esc(entityTitle(sym, art.ent)) + '">' + artInner(sym, art, local) + '</span>';
+    }
+    html += '</span>';
+    if (names.length) {
+      html = html.replace('<span class="word-art"', '<span class="word-art" aria-label="' + esc(names.join(' ')) + '"');
+    }
+    return html;
+  }
+
+  function entityFace(sym, opts) {
+    opts = opts || {};
+    var art = pickArt(sym, opts);
+    if (!art || art.kind === 'label') return '';
+    if (opts.caption === false) {
+      if (art.kind === 'sprite') return spriteHTML(art.ent, opts.appearance.sheet);
+      return imageHTML(art.ent, '');
+    }
+    return artInner(sym, art, opts);
   }
 
   var NOT = {
@@ -92,6 +221,8 @@
   var api = {
     registry: registry,
     tiles: tiles,
+    wordArt: wordArt,
+    entityFace: entityFace,
     clueCode: clueCode,
     esc: esc,
     ids: {

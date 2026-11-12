@@ -86,10 +86,10 @@ One pack describes a game. The page then toggles how you play it:
 
 - **Guess mode** — `any`, `dictionary`, `hard` (the candidate must fit every clue), or `answersOnly`. Wordle hard (reuse greens and yellows) is a separate, weaker switch.
 - **Solution layer** — score **known** answers, the larger **theoretical** list (the dictionary, for English), or **known preferred** (known while any remain, otherwise theoretical). Scenario shows both lists.
-- **Page** — Scenario (remaining lists), Analysis (pattern partitions and scores), Tree (one opener’s solve tree), or both.
+- **Page** — Scenario (remaining lists), Analysis (pattern partitions and scores), Tree (one opener’s solve tree), both, or Create (read a pack’s JSON and try an edit in this browser).
 - **Guarantee** — on Analysis, keep only guesses that can be proved to finish every remaining answer in at most n further guesses (default 6 minus clues entered), under the same guess mode and hard-mode rules on every later step. Max steps is that multi-ply worst case. The one-ply Worst column is unchanged. When scoring is fewest expected steps, survivors stay ordered by that average.
 
-Wordle’s menu default is the live WordleBot pack (`src/packs/wordle-nyt.json`). The ENABLE presets are `src/packs/wordle-en.json` and the list files beside it: lengths 4–8, with the 5-letter list kept as a reference and as the fallback when the live fetch cannot run. Dungleon is unchanged (`src/packs/dungleon.json`): case-sensitive entity letters, any 5-token guess, a known list of 397 unique previous solutions, and a theoretical pool generated from the dungeon rules. Clues use five marks (`r`, `y`, `Y`, `g`, `G`). Custom paste and upload still build a pack in the browser. Purrdle and Mastermind are not playable here; `src/packs/mastermind-sketch.json` only reserves the shape. Details are in [docs/pack-format.md](docs/pack-format.md).
+Wordle’s menu default is the live WordleBot pack (`src/packs/wordle-nyt.json`). The ENABLE presets are `src/packs/wordle-en.json` and the list files beside it: lengths 4–8, with the 5-letter list kept as a reference and as the fallback when the live fetch cannot run. Dungleon (`src/packs/dungleon.json`) keeps case-sensitive entity letters, any 5-token guess, a known list of 397 unique previous solutions, and a theoretical pool generated from the dungeon rules. Clues use five marks (`r`, `y`, `Y`, `g`, `G`). Its tiles and keyboard hotlink pictures from dungleon.com; the letter codes stay the guess, and a broken image falls back to the letter. Custom paste and upload still build a pack in the browser. The Create tab shows a built-in pack’s JSON, checks an edit, and can save that JSON as a custom pack in this browser only. A custom pack cannot include new JavaScript, and it cannot use the WordleBot host cache; a plain https word list is fetched here instead. An on-screen keyboard follows the pack alphabet (QWERTY for the English lists, `keyboard.rows` otherwise), types into the focused guess or result box, and can be collapsed. Purrdle and Mastermind are not playable here; `src/packs/mastermind-sketch.json` only reserves the shape. Details are in [docs/pack-format.md](docs/pack-format.md).
 
 ## Expected steps
 
@@ -127,6 +127,7 @@ node test/tree.test.js
 node test/tree-status.test.js
 node test/dungleon.test.js
 node test/list-parse.test.js
+node test/appearance.test.js
 php -l src/api/wordlebot.php
 php -l src/api/wordlebot-lib.php
 php test/wordlebot-cache.php

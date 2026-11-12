@@ -112,6 +112,10 @@ The script is not given a DOM or a network helper. It still runs in the page’s
 
 `src/packs/rules/wordle.js` is the reference script. It matches `builtin:wordle`. `src/packs/rules/dungleon.js` is the custom-feedback example (five marks, generated solutions).
 
+A pack loaded from the Create tab cannot supply new JavaScript. `script:` is accepted only for `rules/wordle.js` and `rules/dungleon.js`, the files that ship with the page. Anything else is rejected, and the JSON itself is never evaluated.
+
+The WordleBot `remote` block (a host cache of JavaScript const arrays) is also rejected there. A custom pack may instead put an `http` or `https` URL of a plain text list, one word per line, in `knownSolutions` or `guessList`. The browser fetches it and keeps the words in local storage. An array of words, or a file name under `src/packs/`, works too.
+
 ## Guess modes
 
 These are toggles on one pack, not separate games.
@@ -145,12 +149,60 @@ Scenario shows both counts (and both lists). Analysis partitions whichever layer
 | --- | --- |
 | `tiles/letters` | Letter tiles |
 | `tiles/cards` | Multi-character tokens (cards), without forced capitals |
-| `tiles/dungleon` | Letter tiles without forced capitals, used by the Dungleon pack. No glyph art. |
+| `tiles/dungleon` | Letter tiles without forced capitals, used by the Dungleon pack. Pictures, when the pack has `appearance`, are drawn inside that tile. |
 | `clues/wordle-gyb` | G/Y/B, g/y/r, 2/1/0, or emoji tiles. A clue alphabet longer than three marks prints each mark's `label` instead (Dungleon: `rgyYG`). |
 | `clues/arrows-lr` | `· ← →` for a future left/right clue |
 | `clues/mastermind-pips` | A `2B1W` style summary if marks are 0/1/2 |
 
 Dungleon ships as `src/packs/dungleon.json`. Its known list is `dungleon-prevsolutions.txt` (397 unique official dungeons from the previous-solutions history, not the longer generated set). Rules are in `rules/dungleon.js`. Purrdle still needs a real pack. It is not shipped.
+
+## Appearance
+
+`appearance` is optional. Packs that omit it draw each token as its letter. `images` is an accepted alias; `appearance` wins if both are set.
+
+```json
+"appearance": {
+  "sheet": {
+    "url": "https://example.com/sprites.png",
+    "cellWidth": 32,
+    "cellHeight": 32,
+    "columns": 8
+  },
+  "entities": {
+    "A": {
+      "label": "Alpha",
+      "title": "Alpha",
+      "image": "https://example.com/a.png",
+      "sprite": { "index": 0 }
+    },
+    "B": {
+      "label": "Beta",
+      "image": "https://example.com/b.png",
+      "sprite": { "x": 1, "y": 0 }
+    }
+  }
+}
+```
+
+`sheet` is the sprite sheet for small keys, lists, and table cells. `url` must be `http` or `https`. `cellWidth` and `cellHeight` are the cell size in pixels. `columns` is how many cells sit in one row. `sprite.index` counts from the top left, row by row. `sprite.x` and `sprite.y` are the cell column and row, not pixel offsets.
+
+`image` is a larger picture for clue tiles and the guess preview. `label` is the accessible name and, when `title` is omitted, the tooltip. `title` is the tooltip when you want different wording.
+
+Entity keys are the alphabet tokens and are case-sensitive, so `S` and `s` are different pictures. The guess stored by the solver is still the letter code. If a picture fails to load, the tile shows that letter. `data:` and `javascript:` URLs are dropped.
+
+Dungleon sets this field and hotlinks `dungleon.com`. The two-letter file names and the sprite order come from that site's `client.js` (`function V`: `ar`, `ba`, `ch`, `co`, `dr`, `fr`, `go`, `ki`, `ma`, `ne`, `or`, `sk`, `sp`, `th`, `tr`, `ty`, `vi`, `wa`, `wi`, `zo`, `ca`). The pack's own letters are the codes in `rules/dungleon.js` (warrior `W`, spider `s`, goblin `o`, wizard `w`, thief `t`, coin `c`, relic `R`, and the rest). Cake (`ca`, index 20) is not in the pack alphabet.
+
+## Keyboard
+
+`keyboard.rows` is an optional array of rows. Each key is the token to insert, exactly, including case.
+
+```json
+"keyboard": { "rows": [["W", "A", "M"], ["B", "S", "s"]] }
+```
+
+A case-insensitive alphabet of single `a`–`z` letters, with no `keyboard` field, uses QWERTY. Any other alphabet is wrapped in pack order. The page adds Backspace and Enter. The on-screen keyboard types into the focused guess or result box. The physical keyboard still works. The row can be hidden; that choice is remembered in this browser. It starts open on a narrow screen, and for a case-sensitive pack or a pack with `appearance`. A desktop word-game alphabet starts collapsed.
+
+Keys pick up the best mark already entered for that token (correct, then present, then absent, with a plus mark ahead of the plain one). That uses the clue alphabet's `role` and `paint`. It does not re-run a rules script.
 
 ## Clues
 

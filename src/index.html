@@ -18,6 +18,7 @@
     <button type="button" class="ghost" data-page="scenario">Scenario</button>
     <button type="button" class="ghost" data-page="analysis">Analysis</button>
     <button type="button" class="ghost" data-page="tree">Tree</button>
+    <button type="button" class="ghost" data-page="create">Create</button>
   </div>
 </header>
 
@@ -89,12 +90,12 @@
       <button type="button" id="applyBtn">Apply setup</button>
       <span id="packMsg" class="muted"></span>
     </div>
-    <p class="muted small">Wordle opens on the NYT WordleBot lists from this host’s cache. ENABLE presets (<code>packs/wordle-en.json</code>, 4–8 letters, including a 5-letter reference list) stay in the menu for other word games. Guess mode and the solution layer sit on the loaded pack. Apply setup uses the text in the boxes; choosing a WordleBot list above uses the cached copy.</p>
+    <p class="muted small">Wordle opens on the NYT WordleBot lists from this host’s cache. ENABLE presets (<code>packs/wordle-en.json</code>, 4–8 letters, including a 5-letter reference list) stay in the menu for other word games. Guess mode and the solution layer sit on the loaded pack. Apply setup uses the text in the boxes; choosing a WordleBot list above uses the cached copy. To read or edit a pack’s JSON, open the Create tab.</p>
   </details>
   <p id="packWarn" class="warn small" hidden role="status"></p>
 
   <!-- CLUES -->
-  <section class="card">
+  <section class="card" id="cluesCard">
     <h2>Clues so far</h2>
     <div class="clue-entry">
       <input type="text" id="clueGuess" placeholder="guess (e.g. slate)" autocomplete="off" autocapitalize="off" spellcheck="false">
@@ -102,7 +103,15 @@
       <button type="button" id="addClueBtn">Add</button>
     </div>
     <div class="tiles-preview" id="cluePreview" title="Tap a tile to cycle gray → yellow → green"></div>
-    <p class="muted small">Result codes: green <b>G</b>/2/c/🟩 · yellow <b>Y</b>/1/p/o/🟨 · gray <b>B</b>/R/X/W/0/-/.&nbsp;/⬛/⬜. Or type the guess and tap tiles.</p>
+    <p class="muted small">Result codes: green <b>G</b>/2/c/🟩 · yellow <b>Y</b>/1/p/o/🟨 · gray <b>B</b>/R/X/W/0/-/.&nbsp;/⬛/⬜. Or type the guess and tap tiles. A pack with more marks (Dungleon) cycles every mark.</p>
+    <div class="keyboard-wrap" id="keyboardWrap">
+      <div class="row-btns">
+        <button type="button" id="keyboardToggle" class="ghost" aria-expanded="true" aria-controls="keyboard">Hide keyboard</button>
+        <label class="chk" id="imagesToggleLabel" hidden><input type="checkbox" id="cfgImages" checked> Entity images</label>
+      </div>
+      <div id="keyboard" class="keyboard" role="group" aria-label="Guess keyboard"></div>
+      <p class="muted small" id="keyboardHint">Keys type into the highlighted box. Backspace and Enter follow that box. The physical keyboard still works. Pictures are only how a token is drawn; the letter code is still the guess.</p>
+    </div>
     <div id="clueList"></div>
     <div class="row-btns"><button type="button" id="undoBtn" class="ghost">Undo last</button><button type="button" id="clearBtn" class="ghost">Clear all</button></div>
   </section>
@@ -251,6 +260,96 @@
     <div id="treeSummary"></div>
     <div id="treeFamilies"></div>
     <div id="treeWalk"></div>
+  </section>
+  <section class="card" id="createCard">
+    <h2>Create game</h2>
+    <p class="muted small">A game is a JSON pack. Pick a built-in pack to read the file it shipped with, copy it into the editor, or start from the template. Try it loads the definition in this browser only. Nothing is uploaded. The editor does not run JavaScript you paste.</p>
+    <div class="grid2">
+      <label>Built-in pack
+        <select id="createSource"></select>
+      </label>
+      <div class="row-btns">
+        <button type="button" id="createCopy" class="ghost">Copy to editor</button>
+        <a id="createGithub" href="https://github.com/geekahedron/solver/blob/master/docs/pack-format.md">View on GitHub</a>
+      </div>
+    </div>
+    <p class="muted small" id="createRules"></p>
+    <pre id="createSourceView" class="source-view" tabindex="0"></pre>
+    <label>Editor
+      <div class="editor-box">
+        <pre id="createGutter" class="editor-gutter" aria-hidden="true">1</pre>
+        <textarea id="createJson" rows="18" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="Pack JSON"></textarea>
+      </div>
+    </label>
+    <div class="row-btns">
+      <button type="button" id="createTry">Try it</button>
+      <button type="button" id="createDownload" class="ghost">Download JSON</button>
+      <span class="filebtn">Import JSON <input type="file" id="createImport" accept=".json,application/json"></span>
+      <span id="createMsg" class="muted" role="status"></span>
+    </div>
+    <label class="try-variant" id="createVariantLabel" hidden>Variant to try
+      <select id="createVariant"></select>
+    </label>
+    <ul id="createErrors" class="validate"></ul>
+    <div class="row-btns">
+      <span class="muted small">Packs saved from this tab</span>
+      <div id="createSaved" class="saved-packs"></div>
+    </div>
+    <details class="field-ref">
+      <summary>Field reference</summary>
+      <p class="muted small">Full notes: <a href="https://github.com/geekahedron/solver/blob/master/docs/pack-format.md">docs/pack-format.md</a>. Paths below are the keys the checker reports when something is wrong.</p>
+      <dl>
+        <dt><code>id</code>, <code>name</code></dt>
+        <dd>Short id (letters, digits, <code>_</code>, <code>-</code>) and the name shown in the preset menu.</dd>
+        <dt><code>alphabet</code></dt>
+        <dd>A string of one character per token when <code>delimiter</code> is <code>none</code> (<code>"abcdefghijklmnopqrstuvwxyz"</code>, or Dungleon’s <code>"WAMKVBSsDTNOowtFZCcR"</code>). Otherwise an array of tokens (<code>["AS","10C"]</code>). Empty means any token. Case is kept when <code>caseInsensitive</code> is false, so <code>S</code> and <code>s</code> are different entities.</dd>
+        <dt><code>delimiter</code></dt>
+        <dd><code>none</code> (one code point per token), <code>charset</code> (split on spaces and commas), or <code>fixed</code> (split on <code>delimiterValue</code>, default <code>-</code>). Case folding happens before the split, and only when <code>caseInsensitive</code> is true.</dd>
+        <dt><code>length</code></dt>
+        <dd>On each variant (or once at the top level). An integer from 1 to 20. A word is a list of that many tokens.</dd>
+        <dt><code>pools.theoretical</code></dt>
+        <dd><code>guessList</code> — theoretical solutions are the guess list plus the known answers that pass the rules (English). <code>known</code> — reserved; known rows are still marked theoretical today. <code>alphabet</code> — reserved; the engine does not expand alphabet^length. <code>generated</code> — a shipped rules script fills the pool. Only <code>rules/dungleon.js</code> does that here. A known answer that fails the generator stays on the known list.</dd>
+        <dt><code>variants[].knownSolutions</code>, <code>guessList</code></dt>
+        <dd>The answer list and the optional extra guess list. Each one may be an array of words, a file name that ships under <code>src/packs/</code> (Try it can read those), or an <code>http(s)</code> URL of a plain text list, one word per line. Try it fetches that URL in this browser and stores the words here, so nothing is uploaded and the pack still opens if the URL is down later. JavaScript const arrays are not parsed. The WordleBot <code>remote</code> block is a host cache of those files and is rejected in this editor.</dd>
+        <dt><code>clueShape</code>, <code>clueAlphabet</code>, <code>clueCaseSensitive</code></dt>
+        <dd><code>perSlot</code> is one mark per token. <code>whole</code> is one clue for the guess (parsed, not scored, until a script defines it). <code>mixed</code> is reserved. Each mark has <code>id</code>, <code>value</code> (0, 1, 2, …), <code>label</code>, and <code>symbols</code> the result box accepts. <code>role</code> is <code>absent</code>, <code>present</code>, or <code>correct</code>. <code>solve: true</code> is the all-green mark. <code>paint</code> is the tile color (<code>b</code>, <code>y</code>, <code>g</code>, <code>yp</code>, <code>gp</code>). <code>clueCaseSensitive: true</code> keeps <code>y</code> and <code>Y</code> as different marks.</dd>
+        <dt><code>feedback</code>, <code>rules</code></dt>
+        <dd><code>feedback</code> is <code>wordle</code> (extra copies go gray), <code>simple</code> (any present token goes yellow), or <code>custom</code>. <code>rules</code> is <code>builtin:wordle</code>, <code>builtin:simple</code>, or <code>script:rules/….js</code>. A script must export <code>validGuess</code>, <code>validSolution</code>, and <code>consistent</code>. Try it will load a script only when it is a file that already ships here (<code>rules/wordle.js</code>, <code>rules/dungleon.js</code>). Pasted JavaScript is never run. <code>feedback: "custom"</code> needs that shipped script; the page then uses its marks for the remaining list and for Analysis.</dd>
+        <dt><code>guessMode</code></dt>
+        <dd><code>any</code> — any tokens of the right length may be typed. Suggestions stay on the loaded lists. <code>dictionary</code> — <code>validGuess</code> (the lists). <code>hard</code> — the guess must fit every clue. <code>answersOnly</code> — only rows still in the active remaining layer. Wordle hard (reuse greens and yellows) is a separate, weaker switch on the Analysis card.</dd>
+        <dt><code>openers</code></dt>
+        <dd>Starter guesses, on the pack or on one variant. A variant array replaces the pack list. The Tree quick picks use that list, in order, after dropping words that are not legal guesses. Omit it and the page ranks a bounded set by expected information.</dd>
+        <dt><code>tokenRenderer</code>, <code>clueRenderer</code></dt>
+        <dd>Tile chrome: <code>tiles/letters</code>, <code>tiles/cards</code>, <code>tiles/dungleon</code> (letters without forced capitals). Clues: <code>clues/wordle-gyb</code>, <code>clues/arrows-lr</code>, <code>clues/mastermind-pips</code>. These pick the tile shape. Pictures come from <code>appearance</code>.</dd>
+        <dt><code>appearance</code> <small>(alias <code>images</code>)</small></dt>
+        <dd>Optional. Omit it and every token is drawn as its letter, as before. <code>sheet</code> is a sprite sheet for small keys and lists: <code>url</code> (http or https only), <code>cellWidth</code>, <code>cellHeight</code>, and <code>columns</code>. <code>entities</code> is keyed by the alphabet token, case-sensitive. Each entry may have <code>label</code> (accessible name and, if you omit <code>title</code>, the tooltip), <code>title</code>, <code>image</code> (a big tile URL), and <code>sprite</code> as <code>{ "index": 0 }</code> or <code>{ "x": 0, "y": 0 }</code> in cells, not pixels. The letter code stays the guess. If a picture fails to load, the letter is shown. <code>data:</code> and <code>javascript:</code> URLs are ignored.</dd>
+        <dt><code>keyboard.rows</code></dt>
+        <dd>Optional rows of alphabet tokens for the on-screen keyboard. Each string is inserted exactly, so <code>"s"</code> and <code>"S"</code> are different keys. A case-insensitive a–z alphabet with no <code>keyboard</code> uses QWERTY. Any other alphabet is wrapped in pack order. Backspace and Enter are added by the page.</dd>
+      </dl>
+      <pre class="sample">{
+  "id": "sprites-demo",
+  "name": "Sprite demo",
+  "delimiter": "none",
+  "caseInsensitive": false,
+  "alphabet": "AB",
+  "rules": "builtin:wordle",
+  "feedback": "wordle",
+  "keyboard": { "rows": [["A", "B"]] },
+  "appearance": {
+    "sheet": {
+      "url": "https://example.com/sprites.png",
+      "cellWidth": 32,
+      "cellHeight": 32,
+      "columns": 2
+    },
+    "entities": {
+      "A": { "label": "Alpha", "sprite": { "index": 0 }, "image": "https://example.com/a.png" },
+      "B": { "label": "Beta", "sprite": { "x": 1, "y": 0 }, "image": "https://example.com/b.png" }
+    }
+  },
+  "variants": [{ "id": "sprites-demo", "name": "Sprite demo", "length": 2, "knownSolutions": ["AB", "BA"] }]
+}</pre>
+    </details>
   </section>
 </main>
 

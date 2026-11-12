@@ -7,7 +7,7 @@
   var Renderers = window.SolverRenderers;
   var TreeStatus = window.SolverTreeStatus;
   if (!TreeStatus) throw new Error('tree-status.js failed to load');
-  var LS_KEY = 'geek-solver-packs-v1', LS_STATE = 'geek-solver-state-v1';
+  var LS_KEY = 'geek-solver-packs-v1', LS_JSON = 'geek-solver-json-packs-v1', LS_STATE = 'geek-solver-state-v1';
 
   var BUILTIN = [
     { id: 'nyt', name: 'Wordle — NYT WordleBot lists (live)', manifest: 'packs/wordle-nyt.json', variant: 'wordle-nyt', remote: true },
@@ -26,7 +26,7 @@
     mode: 'avg', hard: 'off', ansOnly: false, max: 12000, top: 15, notation: 'GYB',
     layer: 'known', guessMode: 'dictionary', page: 'both',
     guarantee: false, steps: 6, stepsTouched: false, treePolicy: 'worst',
-    nytAnswers: 'with-ed', nytGuesses: 'all' };
+    nytAnswers: 'with-ed', nytGuesses: 'all', images: true, keyboardOpen: null };
   var packId = 'nyt';
   var readyPackId = null;
   var keepPackWarn = false;
@@ -91,11 +91,42 @@
     var id = engine ? engine.pack.clueRenderer : 'clues/wordle-gyb';
     return Renderers.clueCode(id, d, cfg.notation, engine && engine.pack);
   }
+  function showImages() {
+    return cfg.images !== false && !!(engine && engine.pack && engine.pack.appearance);
+  }
+  function artOpts(extra) {
+    var o = Object.assign({}, extra || {});
+    if (engine && engine.pack) o.marks = engine.pack.clueAlphabet;
+    if (showImages()) {
+      o.appearance = engine.pack.appearance;
+      o.showImages = true;
+    }
+    return o;
+  }
   function tilesHTML(syms, digits, opts) {
     var id = engine ? engine.pack.tokenRenderer : 'tiles/letters';
-    opts = Object.assign({}, opts || {});
-    if (engine && engine.pack) opts.marks = engine.pack.clueAlphabet;
-    return Renderers.tiles(id, syms, digits, opts);
+    var o = artOpts(opts);
+    if (opts && opts.art) o.art = opts.art;
+    if (opts && opts.interactive) o.interactive = true;
+    return Renderers.tiles(id, syms, digits, o);
+  }
+  function entityFor(sym) {
+    var app = engine && engine.pack && engine.pack.appearance;
+    if (!app || !app.entities || sym == null || sym === '') return null;
+    return app.entities[sym] || null;
+  }
+  function entityAccessibleName(sym) {
+    var ent = entityFor(sym);
+    var label = ent && (ent.label || ent.title);
+    if (label && label !== sym) return label + ' (' + sym + ')';
+    return String(sym);
+  }
+  function wordHTML(word) {
+    var shown = showWord(word);
+    if (!showImages()) return esc(word);
+    var tokens = Pack.parseWord(word, engine.pack);
+    if (!tokens.length) return esc(word);
+    return Renderers.wordArt(tokens, artOpts({ title: shown, art: 'sprite' }));
   }
   function esc(s) { return Renderers.esc(s); }
 
@@ -140,9 +171,12 @@
   });
 
   function listHTML(idxs) {
-    var shown = idxs.slice(0, 3000).map(function (i) { return esc(engine.keys[i]); });
-    return shown.map(function (w) { return '<div>' + w + '</div>'; }).join('') +
-      (idxs.length > 3000 ? '<div class="muted">… +' + (idxs.length - 3000) + ' more</div>' : '');
+    var useArt = showImages() && idxs.length <= 400;
+    var shown = idxs.slice(0, 3000).map(function (i) {
+      var w = engine.keys[i];
+      return '<div>' + (useArt ? wordHTML(w) : esc(w)) + '</div>';
+    }).join('');
+    return shown + (idxs.length > 3000 ? '<div class="muted">… +' + (idxs.length - 3000) + ' more</div>' : '');
   }
   function renderRemaining() {
     if (!engine) return;
@@ -154,8 +188,14 @@
     $('remLayers').textContent = 'Known ' + remKnown.length.toLocaleString() + ' / ' + engine.nKnown.toLocaleString() +
       ' · Theoretical ' + remTheo.length.toLocaleString() + ' / ' + engine.theoreticalIdx.length.toLocaleString() +
       ' · scoring ' + layerName;
-    if ($('remDetails').open) $('remList').innerHTML = listHTML(remKnown);
-    if ($('remTheo').open) $('remTheoList').innerHTML = listHTML(remTheo);
+    if ($('remDetails').open) {
+      $('remList').classList.toggle('art', showImages() && remKnown.length <= 400);
+      $('remList').innerHTML = listHTML(remKnown);
+    }
+    if ($('remTheo').open) {
+      $('remTheoList').classList.toggle('art', showImages() && remTheo.length <= 400);
+      $('remTheoList').innerHTML = listHTML(remTheo);
+    }
   }
   $('remDetails').addEventListener('toggle', renderRemaining);
   $('remTheo').addEventListener('toggle', renderRemaining);
@@ -185,7 +225,7 @@
     var tb = $('sugTable').tBodies[0];
     tb.innerHTML = top.map(function (s, i) {
       var k = engine.keys[s.idx];
-      return '<tr data-key="' + esc(k) + '"' + (k === selectedKey ? ' class="sel"' : '') + '><td>' + (i + 1) + '</td><td>' + esc(k) + '</td><td>' + stepsText(s) + '</td><td>' + fmt(s.exp, 2) +
+      return '<tr data-key="' + esc(k) + '"' + (k === selectedKey ? ' class="sel"' : '') + '><td>' + (i + 1) + '</td><td>' + wordHTML(k) + '</td><td>' + stepsText(s) + '</td><td>' + fmt(s.exp, 2) +
         '</td><td>' + s.worst + '</td>' + maxStepsCell(s) + '<td>' + s.splits + '</td><td>' + fmt(s.ent, 2) + '</td><td>' + (s.cand ? '<span class="ok">✓</span>' : '') + '</td></tr>';
     }).join('');
     var col = { steps: 2, avg: 3, minimax: 4, splits: 6, entropy: 7 }[cfg.mode];
@@ -238,7 +278,9 @@
       return '<details class="bd-row"' + open + '><summary>' + tilesHTML(g.syms, d) + '<span class="code">' + esc(patCode(d)) + '</span><span class="cnt">' +
         (r[0] === allGreen ? 'solved' : words.length + ' left') + '</span><span class="preview">' + esc(words.slice(0, 12).join(' ')) + (words.length > 12 ? ' …' : '') +
         '</span><button class="ghost mini" data-use="' + r[0] + '" title="Add this result as a clue">use</button></summary><div class="wordlist">' +
-        words.slice(0, 2000).map(function (w) { return '<div>' + esc(w) + '</div>'; }).join('') + (words.length > 2000 ? '<div class="muted">…</div>' : '') + '</div></details>';
+        words.slice(0, 2000).map(function (w) {
+          return '<div>' + (showImages() && words.length <= 200 ? wordHTML(w) : esc(w)) + '</div>';
+        }).join('') + (words.length > 2000 ? '<div class="muted">…</div>' : '') + '</div></details>';
     }).join('');
     if (bdFilterPat !== null && !html) html = '<p class="muted">That result can\'t happen — 0 answers remain for it.</p>';
     $('bdRows').innerHTML = html;
@@ -449,7 +491,7 @@
       if ($('cfgSteps')) $('cfgSteps').value = cfg.steps;
       if ($('treeBudget')) $('treeBudget').value = cfg.steps;
     }
-    renderClues(); renderRemaining(); renderPreview();
+    renderClues(); renderRemaining(); renderPreview(); renderKeyboard();
     selectedKey = null; autoSel = true;
     $('bdRows').innerHTML = ''; $('bdSummary').textContent = ''; $('bdTitle').textContent = '';
     $('bdGuess').value = ''; delete $('bdRows').dataset.guess;
@@ -460,9 +502,14 @@
 
   // ---------- packs ----------
   function savedPacks() { try { return JSON.parse(localStorage.getItem(LS_KEY) || '{}'); } catch (e) { return {}; } }
+  function jsonPacks() { try { return JSON.parse(localStorage.getItem(LS_JSON) || '{}'); } catch (e) { return {}; } }
   function fillPackSel() {
-    var sp = savedPacks(), sel = $('packSel');
+    var sp = savedPacks(), jp = jsonPacks(), sel = $('packSel');
     sel.innerHTML = BUILTIN.map(function (p) { return '<option value="' + p.id + '">' + esc(p.name) + '</option>'; }).join('') +
+      Object.keys(jp).map(function (k) {
+        var rec = jp[k] || {};
+        return '<option value="json:' + esc(k) + '">◆ ' + esc(rec.name || k) + '</option>';
+      }).join('') +
       Object.keys(sp).map(function (k) { return '<option value="saved:' + esc(k) + '">★ ' + esc(k) + '</option>'; }).join('');
     sel.value = packId;
     syncNytPanel();
@@ -482,6 +529,7 @@
     mirrorTreeRules();
     $('cfgLayer').value = cfg.layer || 'known';
     $('cfgGuessMode').value = cfg.guessMode || inferGuessMode();
+    if ($('cfgImages')) $('cfgImages').checked = cfg.images !== false;
     applyPage(cfg.page || 'both', true);
   }
   function reportPack(keepClues) {
@@ -506,6 +554,8 @@
       if (engine.dup) msg += ' · ' + engine.dup + ' duplicates merged';
     }
     document.body.classList.toggle('case-sensitive', !!(engine.pack && engine.pack.caseInsensitive === false));
+    if ($('imagesToggleLabel')) $('imagesToggleLabel').hidden = !(engine.pack && engine.pack.appearance);
+    if ($('cfgImages')) $('cfgImages').checked = cfg.images !== false;
     $('packMsg').textContent = msg;
     var summary = ($('packSel').selectedOptions[0] || {}).textContent + ' · ' + engine.nKnown.toLocaleString() + ' answers';
     if (engine.pack.listSource) summary += ' · ' + engine.guessIdx.length.toLocaleString() + ' guesses';
@@ -610,6 +660,7 @@
     var i;
     if (!id) return 'the ENABLE 5-letter pack';
     if (id.indexOf('saved:') === 0) return 'the saved pack ' + id.slice(6);
+    if (id.indexOf('json:') === 0) return 'the custom pack ' + (jsonPacks()[id.slice(5)] && jsonPacks()[id.slice(5)].name || id.slice(5));
     for (i = 0; i < BUILTIN.length; i++) if (BUILTIN[i].id === id) return BUILTIN[i].name;
     return 'the previous pack';
   }
@@ -935,6 +986,9 @@
       $('ansText').value = p.answers || ''; $('guessText').value = p.guesses || '';
       mountCustom(keepClues); return Promise.resolve();
     }
+    if (id.indexOf('json:') === 0) {
+      return loadJsonPack(id.slice(5), gen, !!keepClues, !!applyDefaults);
+    }
     var b = BUILTIN.filter(function (x) { return x.id === id; })[0];
     if (!b) b = BUILTIN.filter(function (x) { return x.id === 'en5'; })[0] || BUILTIN[0];
     if (b.blank) {
@@ -996,7 +1050,12 @@
     packId = 'saved:' + name; fillPackSel(); mountCustom(true);
   });
   $('delPackBtn').addEventListener('click', function () {
-    if (packId.indexOf('saved:') !== 0) { alert('Select a saved (★) pack first.'); return; }
+    if (packId.indexOf('json:') === 0) {
+      deleteJsonPack(packId.slice(5));
+      packId = 'nyt'; fillPackSel(); loadPack('nyt', false);
+      return;
+    }
+    if (packId.indexOf('saved:') !== 0) { alert('Select a saved (★ or ◆) pack first.'); return; }
     var sp = savedPacks(); delete sp[packId.slice(6)]; localStorage.setItem(LS_KEY, JSON.stringify(sp));
     packId = 'nyt'; fillPackSel(); loadPack('nyt', false);
   });
@@ -1084,9 +1143,10 @@
     Array.prototype.forEach.call(document.querySelectorAll('#pageModes button'), function (b) {
       b.classList.toggle('on', b.getAttribute('data-page') === cfg.page);
     });
+    if (cfg.page === 'create') openCreate();
     if (!silent) {
       saveState();
-      if (cfg.page !== 'tree') scheduleScore();
+      if (cfg.page !== 'tree' && cfg.page !== 'create') scheduleScore();
     }
   }
   $('pageModes').addEventListener('click', function (e) {
@@ -1254,7 +1314,8 @@
   function renderOpenerPicks() {
     if (!$('treePicks')) return;
     $('treePicks').innerHTML = openerWords.map(function (w) {
-      return '<button type="button" class="ghost mini" data-pick="' + esc(w) + '">' + esc(showWord(w)) + '</button>';
+      var label = showImages() ? wordHTML(w) : esc(showWord(w));
+      return '<button type="button" class="ghost mini" data-pick="' + esc(w) + '">' + label + '</button>';
     }).join('');
     if ($('treeOpenerList')) {
       $('treeOpenerList').innerHTML = openerWords.map(function (w) {
@@ -1274,7 +1335,7 @@
     if (wrap) wrap.hidden = !words.length;
     table.tBodies[0].innerHTML = words.map(function (w, i) {
       var mark = scanMarks[w] || '–';
-      return '<tr data-word="' + esc(w) + '"><td>' + (i + 1) + '</td><td>' + esc(w) +
+      return '<tr data-word="' + esc(w) + '"><td>' + (i + 1) + '</td><td>' + wordHTML(w) +
         '</td><td>' + bitsCell(w) + '</td><td class="scan-mark">' + esc(mark) + '</td></tr>';
     }).join('');
   }
@@ -1447,7 +1508,8 @@
       if (treeOnlyOver && d.proved && !over) continue;
       var cls = 'ans' + (!d.proved ? ' unproved' : (over ? ' over' : ''));
       var title = d.proved ? (d.depth + ' · ' + (d.pats || []).map(function (p) { return patCode(patToDigits(p)); }).join(' → ')) : (d.reason || 'unproved');
-      listHtml += '<span class="' + cls + '" title="' + esc(title) + '">' + esc(engine.keys[d.idx]) + (d.proved ? ' ' + d.depth : ' ?') + '</span>';
+      var chip = (showImages() && tree.depths.length <= 800) ? wordHTML(engine.keys[d.idx]) : esc(showWord(engine.keys[d.idx]));
+      listHtml += '<span class="' + cls + '" title="' + esc(title) + '">' + chip + (d.proved ? ' ' + d.depth : ' ?') + '</span>';
       if (++shown >= 2500) break;
     }
 
@@ -1500,7 +1562,9 @@
     }
     crumbs += '</div>';
     var mark = (!node.forced && node.policyExact === false) ? ' ≈' : '';
-    var head = '<div class="tree-head"><b>' + esc(showWord(treeWord(node.guess) || '—')) + mark + '</b>';
+    var headWord = treeWord(node.guess);
+    var headFace = headWord ? (showImages() ? wordHTML(headWord) : esc(showWord(headWord))) : '—';
+    var head = '<div class="tree-head"><b>' + headFace + mark + '</b>';
     head += '<span class="muted small">' + node.n + ' answers';
     if (node.maxDepth != null) head += ' · max ' + node.maxDepth;
     if (node.over) head += ' · ' + node.over + ' over n';
@@ -1522,7 +1586,7 @@
       rows += '<span class="code">' + esc(patCode(patToDigits(ch.pat))) + '</span>';
       rows += '<span class="cnt">' + (ch.solved ? 'solved' : ch.n + ' left') + '</span>';
       if (ch.solved) rows += '<span class="next">solved</span>';
-      else if (ch.node && ch.node.guess != null) rows += '<span class="next">' + esc(treeWord(ch.node.guess)) + ((!ch.node.forced && ch.node.policyExact === false) ? ' ≈' : '') + '</span>';
+      else if (ch.node && ch.node.guess != null) rows += '<span class="next">' + wordHTML(treeWord(ch.node.guess)) + ((!ch.node.forced && ch.node.policyExact === false) ? ' ≈' : '') + '</span>';
       else rows += '<span class="next">…</span>';
       if (ch.maxDepth != null) rows += '<span' + (ch.maxDepth > s.budget ? ' class="warn"' : '') + '>max ' + ch.maxDepth + '</span>';
       if (ch.over) rows += '<span class="warn">' + ch.over + ' over</span>';
@@ -2068,6 +2132,637 @@
     if (e.target.classList && e.target.classList.contains('tree-all')) treeListOpen = !!e.target.open;
   }, true);
 
+  var GUESS_FIELDS = ['clueGuess', 'cluePat', 'bdGuess', 'treeOpener'];
+  var keyTarget = 'clueGuess';
+  var PAINT_OK = { b: 1, y: 1, g: 1, yp: 1, gp: 1 };
+  var createLoaded = false;
+  var createFileText = '';
+  var viewedManifest = null;
+  var GH_BLOB = 'https://github.com/geekahedron/solver/blob/master/';
+  var CREATE_SOURCES = [
+    { id: 'template', label: 'Blank template', template: true },
+    { id: 'wordle-en', label: 'English Wordle-style (wordle-en.json)', file: 'packs/wordle-en.json', github: 'src/packs/wordle-en.json' },
+    { id: 'wordle-nyt', label: 'NYT WordleBot (wordle-nyt.json)', file: 'packs/wordle-nyt.json', github: 'src/packs/wordle-nyt.json' },
+    { id: 'dungleon', label: 'Dungleon (dungleon.json)', file: 'packs/dungleon.json', github: 'src/packs/dungleon.json' },
+    { id: 'mastermind', label: 'Mastermind sketch (not playable)', file: 'packs/mastermind-sketch.json', github: 'src/packs/mastermind-sketch.json' }
+  ];
+
+  function templateManifest() {
+    return {
+      id: 'my-game',
+      name: 'My game',
+      note: 'Starter pack. Edit the lists, or replace them with an https URL of a plain text word list.',
+      delimiter: 'none',
+      caseInsensitive: true,
+      clueShape: 'perSlot',
+      clueAlphabet: [
+        { id: 'absent', value: 0, label: 'B', role: 'absent', paint: 'b', symbols: ['b', 'r', 'x', 'w', '0'] },
+        { id: 'present', value: 1, label: 'Y', role: 'present', paint: 'y', symbols: ['y', 'p', 'o', '1'] },
+        { id: 'correct', value: 2, label: 'G', role: 'correct', paint: 'g', solve: true, symbols: ['g', 'c', '2'] }
+      ],
+      tokenRenderer: 'tiles/letters',
+      clueRenderer: 'clues/wordle-gyb',
+      feedback: 'wordle',
+      rules: 'builtin:wordle',
+      alphabet: 'abcdefghijklmnopqrstuvwxyz',
+      pools: { theoretical: 'guessList' },
+      guessMode: 'dictionary',
+      openers: ['crane', 'slate', 'trace'],
+      variants: [{
+        id: 'my-game-5',
+        name: 'My game (5)',
+        length: 5,
+        knownSolutions: ['crane', 'slate', 'trace', 'raise', 'stare'],
+        guessList: ['crane', 'slate', 'trace', 'raise', 'stare', 'alert']
+      }]
+    };
+  }
+
+  function templateText() {
+    return JSON.stringify(templateManifest(), null, 2) + '\n';
+  }
+
+  function keyboardAutoOpen() {
+    var narrow = false;
+    try {
+      narrow = window.matchMedia('(max-width: 760px), (pointer: coarse)').matches;
+    } catch (e) {}
+    if (narrow) return true;
+    var pack = engine && engine.pack;
+    if (!pack) return false;
+    if (pack.caseInsensitive === false) return true;
+    if (pack.appearance) return true;
+    var tokens = Pack.alphabetTokens(pack);
+    var az = tokens.length && tokens.every(function (t) { return /^[a-z]$/.test(t); });
+    return !az;
+  }
+  function keyboardIsOpen() {
+    if (cfg.keyboardOpen === true || cfg.keyboardOpen === false) return cfg.keyboardOpen;
+    return keyboardAutoOpen();
+  }
+  function syncKeyboardOpen() {
+    var wrap = $('keyboardWrap');
+    var btn = $('keyboardToggle');
+    if (!wrap || !btn) return;
+    var open = keyboardIsOpen();
+    wrap.classList.toggle('collapsed', !open);
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    btn.textContent = open ? 'Hide keyboard' : 'Show keyboard';
+  }
+  function markKeyTarget() {
+    GUESS_FIELDS.forEach(function (id) {
+      var el = $(id);
+      if (el) el.classList.toggle('key-target', id === keyTarget);
+    });
+  }
+  function keyPaint() {
+    var best = Object.create(null);
+    if (!engine || !engine.pack) return best;
+    var marks = engine.pack.clueAlphabet || [];
+    function meta(digit) {
+      var i;
+      for (i = 0; i < marks.length; i++) if (marks[i].value === digit) return marks[i];
+      return null;
+    }
+    function rank(m) {
+      if (!m) return 0;
+      if (m.role === 'correct' && m.plus) return 5;
+      if (m.role === 'correct' || m.solve) return 4;
+      if (m.role === 'present' && m.plus) return 3;
+      if (m.role === 'present') return 2;
+      if (m.role === 'absent' || m.value === 0) return 1;
+      return 0;
+    }
+    clues.forEach(function (c) {
+      var i, m, r, sym, paint;
+      for (i = 0; i < c.syms.length; i++) {
+        sym = c.syms[i];
+        if (!sym) continue;
+        m = meta(c.digits[i]);
+        r = rank(m);
+        paint = m && PAINT_OK[m.paint] ? m.paint : '';
+        if (!best[sym] || r > best[sym].rank) best[sym] = { rank: r, paint: paint };
+      }
+    });
+    return best;
+  }
+  function keyButton(sym, paint) {
+    var face = showImages() ? Renderers.entityFace(sym, artOpts({ art: 'sprite', caption: false })) : '';
+    var cls = 'key' + (face ? ' art' : '') + (paint ? ' ' + paint : '');
+    var name = entityAccessibleName(sym);
+    return '<button type="button" class="' + cls + '" data-key="' + esc(sym) + '" aria-label="' + esc(name) + '" title="' + esc(name) + '">' +
+      face + '<span class="key-cap">' + esc(sym) + '</span></button>';
+  }
+  function renderKeyboard() {
+    var el = $('keyboard');
+    if (!el) return;
+    var pack = engine && engine.pack;
+    var rows = pack ? Pack.keyboardRows(pack) : [];
+    var paints = keyPaint();
+    var html = rows.map(function (row) {
+      return '<div class="key-row">' + row.map(function (sym) {
+        var paint = paints[sym] && paints[sym].paint;
+        return keyButton(sym, paint);
+      }).join('') + '</div>';
+    }).join('');
+    html += '<div class="key-row key-row-actions"><button type="button" class="key key-wide" data-key="Backspace" aria-label="Backspace">Back</button>' +
+      '<button type="button" class="key key-wide" data-key="Enter" aria-label="Enter">Enter</button></div>';
+    el.innerHTML = html;
+    syncKeyboardOpen();
+    markKeyTarget();
+  }
+  function insertInto(el, text) {
+    var start = el.selectionStart, end = el.selectionEnd, value = el.value || '';
+    if (start == null || end == null) {
+      el.value = value + text;
+      return;
+    }
+    el.value = value.slice(0, start) + text + value.slice(end);
+    var pos = start + text.length;
+    try { el.setSelectionRange(pos, pos); } catch (e) {}
+  }
+  function backspaceIn(el) {
+    var start = el.selectionStart, end = el.selectionEnd, value = el.value || '';
+    if (start == null || end == null) { el.value = value.slice(0, -1); return; }
+    if (start !== end) {
+      el.value = value.slice(0, start) + value.slice(end);
+      try { el.setSelectionRange(start, start); } catch (e) {}
+      return;
+    }
+    if (!start) return;
+    el.value = value.slice(0, start - 1) + value.slice(end);
+    try { el.setSelectionRange(start - 1, start - 1); } catch (e) {}
+  }
+  function submitKeyTarget() {
+    if (keyTarget === 'bdGuess') { $('bdBtn').click(); return; }
+    if (keyTarget === 'treeOpener') { $('treeBuild').click(); return; }
+    if (keyTarget === 'clueGuess' && !$('cluePat').value) { $('cluePat').focus(); return; }
+    $('addClueBtn').click();
+  }
+  function onKeyPress(key) {
+    var el = $(keyTarget) || $('clueGuess');
+    if (!el) return;
+    if (key === 'Enter') { submitKeyTarget(); return; }
+    if (key === 'Backspace') {
+      backspaceIn(el);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      return;
+    }
+    insertInto(el, key);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    try { el.focus(); } catch (e) {}
+  }
+
+  function loadShippedRules(pack) {
+    var id = (pack && pack.rules) || 'builtin:wordle';
+    if (id.indexOf('script:') !== 0) return Promise.resolve(Pack.resolveRules(pack));
+    var rel = id.slice('script:'.length);
+    if (!Pack.shippedRuleScript(rel)) {
+      return Promise.reject(new Error('This pack names a rules script this page will not run (' + rel + '). Use builtin:wordle, builtin:simple, rules/wordle.js, or rules/dungleon.js.'));
+    }
+    return Pack.loadRules(pack, function (path) {
+      if (!Pack.shippedRuleScript(path)) return Promise.reject(new Error('Refusing to load ' + path));
+      return fetch('packs/' + path).then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.text();
+      });
+    });
+  }
+  function loadJsonPack(key, gen, keepClues, applyDefaults) {
+    var rec = jsonPacks()[key];
+    if (!rec || !rec.manifest) {
+      packPhase = 'failed';
+      packError = 'Saved pack is missing';
+      $('packMsg').textContent = 'That custom pack is no longer in this browser.';
+      failQueuedPack();
+      return Promise.resolve();
+    }
+    var manifest = rec.manifest;
+    var variant = null;
+    (manifest.variants || []).forEach(function (v) { if (v && v.id === rec.variantId) variant = v; });
+    if (!variant) {
+      variant = (manifest.variants && manifest.variants[0]) || {
+        id: manifest.id, name: manifest.name, length: manifest.length,
+        knownSolutions: manifest.knownSolutions, guessList: manifest.guessList
+      };
+    }
+    var pack;
+    try { pack = Pack.normalize(manifest, variant); }
+    catch (err) {
+      packPhase = 'failed';
+      packError = TreeStatus.errorText(err);
+      $('packMsg').textContent = 'Could not read this custom pack (' + packError + ').';
+      failQueuedPack();
+      return Promise.resolve();
+    }
+    $('packMsg').textContent = 'Loading…';
+    return loadShippedRules(pack).then(function (rules) {
+      if (gen !== packGen) return;
+      mountFetchedPack(pack, manifest, variant, null, rec.answers || '', rec.guesses || '', rules, keepClues, applyDefaults);
+    }).catch(function (err) {
+      if (gen !== packGen) return;
+      packPhase = 'failed';
+      packError = (err && err.message) ? err.message : String(err || 'load failed');
+      $('packMsg').textContent = 'Could not load this custom pack (' + packError + ').';
+      failQueuedPack();
+    });
+  }
+  function deleteJsonPack(key) {
+    var jp = jsonPacks();
+    delete jp[key];
+    try { localStorage.setItem(LS_JSON, JSON.stringify(jp)); } catch (e) {}
+    renderCreateSaved();
+  }
+  function listText(value) {
+    var kind = Pack.classifyList(value);
+    if (kind.kind === 'empty') return Promise.resolve('');
+    if (kind.kind === 'bad') return Promise.reject(new Error('not a word list this page can load'));
+    if (kind.kind === 'array') {
+      return Promise.resolve(value.map(function (w) { return String(w).trim(); }).filter(Boolean).join('\n'));
+    }
+    if (kind.kind === 'url') {
+      return fetchRemoteText(kind.url, 20000).then(function (text) {
+        if (!text || !String(text).trim()) throw new Error('the list was empty');
+        if (String(text).length > 2000000) throw new Error('that list is too large');
+        return text;
+      });
+    }
+    return fetch('packs/' + kind.file).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' for packs/' + kind.file);
+      return r.text();
+    });
+  }
+
+  function createSourceById(id) {
+    var i;
+    for (i = 0; i < CREATE_SOURCES.length; i++) if (CREATE_SOURCES[i].id === id) return CREATE_SOURCES[i];
+    return CREATE_SOURCES[0];
+  }
+  function fillCreateSource() {
+    var sel = $('createSource');
+    if (!sel || sel.options.length) return;
+    sel.innerHTML = CREATE_SOURCES.map(function (s) {
+      return '<option value="' + esc(s.id) + '">' + esc(s.label) + '</option>';
+    }).join('');
+  }
+  function setCreateLink(src) {
+    var a = $('createGithub');
+    if (!a) return;
+    if (src && src.github) {
+      a.href = GH_BLOB + src.github;
+      a.textContent = 'View ' + src.github.replace(/^src\//, '') + ' on GitHub';
+    } else {
+      a.href = GH_BLOB + 'docs/pack-format.md';
+      a.textContent = 'Pack format on GitHub';
+    }
+  }
+  function appendRulesNote(el, manifest) {
+    if (!manifest || typeof manifest !== 'object') return;
+    var rules = manifest.rules;
+    if (manifest.remote) {
+      var remote = document.createElement('span');
+      remote.className = 'warn';
+      remote.textContent = 'This file uses a remote host cache (the WordleBot lists). Try it will not load that. A custom pack can use an https URL of a plain text word list, or an array of words. ';
+      el.appendChild(remote);
+    }
+    if (typeof rules === 'string' && rules.indexOf('script:') === 0) {
+      var rel = rules.slice('script:'.length);
+      el.appendChild(document.createTextNode('This JSON points at a rules module (' + rel + '). That file is not inside the JSON, and this editor cannot run JavaScript you paste. '));
+      if (Pack.shippedRuleScript(rel)) {
+        var a = document.createElement('a');
+        a.href = GH_BLOB + 'src/packs/' + rel;
+        a.textContent = 'View ' + rel + ' on GitHub';
+        el.appendChild(a);
+        el.appendChild(document.createTextNode('. Try it loads only that shipped file. Any other script path is rejected.'));
+      } else {
+        el.appendChild(document.createTextNode('This page will not run that path. Try it only loads rules/wordle.js or rules/dungleon.js.'));
+      }
+      return;
+    }
+    if (!manifest.remote) {
+      el.appendChild(document.createTextNode('Built-in rules (' + (rules || 'builtin:wordle') + '). No extra JavaScript is loaded. A pack you invent here stays JSON-only.'));
+    }
+  }
+  function showCreateRules() {
+    var el = $('createRules');
+    if (!el) return;
+    el.textContent = '';
+    if (viewedManifest) appendRulesNote(el, viewedManifest);
+  }
+  function editorObject() {
+    var text = $('createJson') ? $('createJson').value : '';
+    if (!String(text).trim()) return { error: 'The editor is empty.' };
+    try { return { value: JSON.parse(text) }; }
+    catch (err) { return { error: 'Not valid JSON (' + (err && err.message ? err.message : 'parse error') + ').' }; }
+  }
+  function showValidation(result) {
+    var ul = $('createErrors');
+    if (!ul) return;
+    ul.textContent = '';
+    var items = (result.errors || []).map(function (e) { return { path: e.path, message: e.message, warn: false }; })
+      .concat((result.warnings || []).map(function (w) { return { path: w.path, message: w.message, warn: true }; }));
+    if (!items.length) {
+      var ok = document.createElement('li');
+      ok.className = 'ok';
+      ok.textContent = 'Valid pack.';
+      ul.appendChild(ok);
+      return;
+    }
+    items.forEach(function (item) {
+      var li = document.createElement('li');
+      li.className = item.warn ? 'warn' : 'bad';
+      var code = document.createElement('code');
+      code.textContent = item.path || '(pack)';
+      li.appendChild(code);
+      li.appendChild(document.createTextNode(' — ' + item.message));
+      ul.appendChild(li);
+    });
+  }
+  function syncCreateVariants(manifest) {
+    var label = $('createVariantLabel');
+    var sel = $('createVariant');
+    if (!label || !sel) return;
+    var variants = manifest && Array.isArray(manifest.variants) ? manifest.variants : [];
+    if (variants.length < 2) { label.hidden = true; sel.innerHTML = ''; return; }
+    label.hidden = false;
+    var prev = sel.value;
+    sel.innerHTML = variants.map(function (v, i) {
+      var id = v && v.id ? String(v.id) : String(i);
+      var name = v && v.name ? String(v.name) : id;
+      return '<option value="' + esc(id) + '">' + esc(name) + '</option>';
+    }).join('');
+    if (prev) sel.value = prev;
+  }
+  function validateEditor() {
+    var parsed = editorObject();
+    if (parsed.error) {
+      showValidation({ errors: [{ path: '(json)', message: parsed.error }], warnings: [] });
+      showCreateRules(null);
+      syncCreateVariants(null);
+      return null;
+    }
+    var result = Pack.validateManifest(parsed.value);
+    showValidation(result);
+    showCreateRules();
+    syncCreateVariants(parsed.value);
+    return result.ok ? parsed.value : null;
+  }
+  function updateGutter() {
+    var area = $('createJson');
+    var gutter = $('createGutter');
+    if (!area || !gutter) return;
+    var n = Math.max(1, area.value.split('\n').length);
+    var lines = [];
+    var i;
+    for (i = 1; i <= n; i++) lines.push(String(i));
+    gutter.textContent = lines.join('\n');
+    gutter.scrollTop = area.scrollTop;
+  }
+  var createTimer = null;
+  function onCreateEdit() {
+    updateGutter();
+    if (createTimer) clearTimeout(createTimer);
+    createTimer = setTimeout(function () { createTimer = null; validateEditor(); }, 120);
+  }
+  function showCreateFile(text) {
+    createFileText = text || '';
+    var pre = $('createSourceView');
+    if (pre) pre.textContent = createFileText || '(empty)';
+  }
+  function loadCreateSource() {
+    fillCreateSource();
+    var src = createSourceById($('createSource').value);
+    setCreateLink(src);
+    if (src.template) {
+      viewedManifest = templateManifest();
+      showCreateFile(templateText());
+      showCreateRules();
+      return;
+    }
+    var pre = $('createSourceView');
+    if (pre) pre.textContent = 'Loading ' + src.file + '…';
+    fetch(src.file).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.text();
+    }).then(function (text) {
+      if (createSourceById($('createSource').value).id !== src.id) return;
+      showCreateFile(text);
+      try { viewedManifest = JSON.parse(text); } catch (e) { viewedManifest = null; }
+      showCreateRules();
+    }).catch(function (err) {
+      showCreateFile('Could not load ' + src.file + ' (' + (err && err.message ? err.message : 'failed') + ').');
+    });
+  }
+  function openCreate() {
+    fillCreateSource();
+    if (!createLoaded) {
+      createLoaded = true;
+      if ($('createJson') && !$('createJson').value) $('createJson').value = templateText();
+      loadCreateSource();
+      onCreateEdit();
+      renderCreateSaved();
+    }
+  }
+  function renderCreateSaved() {
+    var box = $('createSaved');
+    if (!box) return;
+    var jp = jsonPacks();
+    var keys = Object.keys(jp);
+    if (!keys.length) {
+      box.textContent = '';
+      var none = document.createElement('span');
+      none.className = 'muted small';
+      none.textContent = 'None yet. Try it saves one here and in Game setup.';
+      box.appendChild(none);
+      return;
+    }
+    box.textContent = '';
+    keys.forEach(function (key) {
+      var rec = jp[key] || {};
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'ghost mini';
+      btn.textContent = 'Delete ' + (rec.name || key);
+      btn.addEventListener('click', function () {
+        deleteJsonPack(key);
+        if (packId === 'json:' + key) { packId = 'nyt'; fillPackSel(); loadPack('nyt', false); }
+        else fillPackSel();
+      });
+      box.appendChild(btn);
+    });
+  }
+  function chosenVariant(manifest) {
+    var variants = manifest.variants || [];
+    if (!variants.length) {
+      return {
+        id: manifest.id,
+        name: manifest.name,
+        length: manifest.length,
+        knownSolutions: manifest.knownSolutions,
+        guessList: manifest.guessList,
+        guessMode: manifest.guessMode,
+        openers: manifest.openers
+      };
+    }
+    var want = $('createVariant') && !$('createVariantLabel').hidden ? $('createVariant').value : '';
+    var i;
+    for (i = 0; i < variants.length; i++) if (variants[i] && variants[i].id === want) return variants[i];
+    return variants[0];
+  }
+  function tryCreatePack() {
+    var msg = $('createMsg');
+    var manifest = validateEditor();
+    if (!manifest) {
+      if (msg) msg.textContent = 'Fix the errors above before trying this pack.';
+      return;
+    }
+    var variant = chosenVariant(manifest);
+    if (msg) msg.textContent = 'Loading lists…';
+    var answersP = listText(variant.knownSolutions);
+    var guessesP = variant.guessList != null ? listText(variant.guessList) : Promise.resolve('');
+    Promise.all([answersP, guessesP]).then(function (parts) {
+      var pack = Pack.normalize(manifest, variant);
+      return loadShippedRules(pack).then(function () {
+        return parts;
+      });
+    }).then(function (parts) {
+      var jp = jsonPacks();
+      jp[manifest.id] = {
+        name: manifest.name,
+        manifest: manifest,
+        variantId: variant.id || manifest.id,
+        answers: parts[0],
+        guesses: parts[1]
+      };
+      localStorage.setItem(LS_JSON, JSON.stringify(jp));
+      renderCreateSaved();
+      packId = 'json:' + manifest.id;
+      fillPackSel();
+      if (msg) msg.textContent = 'Saved “' + manifest.name + '” in this browser. It is selected under Game setup.';
+      applyPage('both');
+      return loadPack('json:' + manifest.id, false, true);
+    }).catch(function (err) {
+      var why = (err && err.message) ? err.message : 'the pack did not load';
+      if (why === 'Failed to fetch' || why === 'Load failed') why = 'the browser could not fetch that list (' + why + ')';
+      if (msg) msg.textContent = 'Could not try this pack: ' + why;
+    });
+  }
+  function downloadCreateJson() {
+    var text = $('createJson').value;
+    var name = 'game.json';
+    try {
+      var obj = JSON.parse(text);
+      if (obj && typeof obj.id === 'string' && /^[A-Za-z0-9_-]+$/.test(obj.id)) name = obj.id + '.json';
+    } catch (e) {}
+    var blob = new Blob([text], { type: 'application/json' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1500);
+  }
+
+  if ($('keyboard')) {
+    $('keyboard').addEventListener('mousedown', function (e) {
+      if (e.target.closest('button')) e.preventDefault();
+    });
+    $('keyboard').addEventListener('click', function (e) {
+      var b = e.target.closest('[data-key]');
+      if (!b) return;
+      onKeyPress(b.getAttribute('data-key'));
+    });
+  }
+  if ($('keyboardToggle')) $('keyboardToggle').addEventListener('click', function () {
+    cfg.keyboardOpen = !keyboardIsOpen();
+    syncKeyboardOpen();
+    saveState();
+  });
+  if ($('cfgImages')) $('cfgImages').addEventListener('change', function () {
+    cfg.images = this.checked;
+    renderClues();
+    renderPreview();
+    renderRemaining();
+    renderKeyboard();
+    if (lastTop && lastTop.length) renderSuggestions(lastTop);
+    renderOpenerPicks();
+    renderOpenerTable(openerWords);
+    renderTree();
+    if ($('bdRows') && $('bdRows').dataset.guess) analyze($('bdRows').dataset.guess, false);
+    saveState();
+  });
+  GUESS_FIELDS.forEach(function (id) {
+    var el = $(id);
+    if (!el) return;
+    el.addEventListener('focus', function () { keyTarget = id; markKeyTarget(); });
+  });
+  function artHost(node) {
+    return node && node.closest ? node.closest('.tile, .mini-tile, .key') : null;
+  }
+  document.addEventListener('load', function (e) {
+    var t = e.target;
+    if (!t || !t.classList || !t.classList.contains('entity-img')) return;
+    var host = artHost(t);
+    if (host) host.classList.add('art-ready');
+  }, true);
+  document.addEventListener('error', function (e) {
+    var t = e.target;
+    if (!t || !t.classList || !t.classList.contains('entity-img')) return;
+    var host = artHost(t);
+    if (!host) return;
+    host.classList.add('art-failed');
+    host.classList.remove('art-ready');
+    var letter = host.querySelector('.entity-letter');
+    if (letter) letter.removeAttribute('aria-hidden');
+  }, true);
+  function settleArt(root) {
+    if (!document.querySelectorAll) return;
+    var imgs = (root || document).querySelectorAll('img.entity-img');
+    Array.prototype.forEach.call(imgs, function (img) {
+      if (!img.complete) return;
+      var host = artHost(img);
+      if (!host) return;
+      if (img.naturalWidth > 0) host.classList.add('art-ready');
+      else {
+        host.classList.add('art-failed');
+        host.classList.remove('art-ready');
+      }
+    });
+  }
+  if (window.MutationObserver) {
+    new MutationObserver(function () { settleArt(document); }).observe(document.body, { childList: true, subtree: true });
+  }
+
+  if ($('createSource')) $('createSource').addEventListener('change', loadCreateSource);
+  if ($('createCopy')) $('createCopy').addEventListener('click', function () {
+    if (!$('createJson')) return;
+    $('createJson').value = createFileText || templateText();
+    onCreateEdit();
+    $('createJson').focus();
+  });
+  if ($('createJson')) {
+    $('createJson').addEventListener('input', onCreateEdit);
+    $('createJson').addEventListener('scroll', function () {
+      if ($('createGutter')) $('createGutter').scrollTop = $('createJson').scrollTop;
+    });
+  }
+  if ($('createTry')) $('createTry').addEventListener('click', tryCreatePack);
+  if ($('createDownload')) $('createDownload').addEventListener('click', downloadCreateJson);
+  if ($('createImport')) $('createImport').addEventListener('change', function () {
+    var input = this;
+    var f = input.files && input.files[0];
+    if (!f) return;
+    f.text().then(function (t) {
+      $('createJson').value = t;
+      onCreateEdit();
+      input.value = '';
+      if ($('createMsg')) $('createMsg').textContent = 'Imported ' + f.name + ' into the editor. Nothing was uploaded.';
+    }).catch(function () {
+      if ($('createMsg')) $('createMsg').textContent = 'Could not read that file.';
+    });
+  });
+
   function saveState() {
     try {
       localStorage.setItem(LS_STATE, JSON.stringify({
@@ -2079,7 +2774,7 @@
   function init() {
     var st = null; try { st = JSON.parse(localStorage.getItem(LS_STATE) || 'null'); } catch (e) {}
     if (st && st.cfg) {
-        ['mode', 'hard', 'ansOnly', 'max', 'top', 'notation', 'valid', 'layer', 'guessMode', 'page', 'guarantee', 'steps', 'stepsTouched', 'treePolicy', 'nytAnswers', 'nytGuesses'].forEach(function (k) {
+        ['mode', 'hard', 'ansOnly', 'max', 'top', 'notation', 'valid', 'layer', 'guessMode', 'page', 'guarantee', 'steps', 'stepsTouched', 'treePolicy', 'nytAnswers', 'nytGuesses', 'images', 'keyboardOpen'].forEach(function (k) {
         if (st.cfg[k] !== undefined) cfg[k] = st.cfg[k];
       });
       if (!st.cfg.guessMode) cfg.guessMode = inferGuessMode();
@@ -2088,7 +2783,12 @@
     nytWant.guesses = cfg.nytGuesses || 'all';
     if ($('nytAnswers')) $('nytAnswers').value = nytWant.answers;
     if ($('nytGuesses')) $('nytGuesses').value = nytWant.guesses;
-    var pid = st && st.packId && (st.packId.indexOf('saved:') === 0 ? savedPacks()[st.packId.slice(6)] : BUILTIN.some(function (b) { return b.id === st.packId && !b.blank; })) ? st.packId : 'nyt';
+    var pid = 'nyt';
+    if (st && st.packId) {
+      if (st.packId.indexOf('saved:') === 0 && savedPacks()[st.packId.slice(6)]) pid = st.packId;
+      else if (st.packId.indexOf('json:') === 0 && jsonPacks()[st.packId.slice(5)]) pid = st.packId;
+      else if (BUILTIN.some(function (b) { return b.id === st.packId && !b.blank; })) pid = st.packId;
+    }
     packId = pid; fillPackSel(); writeCfgToUI();
     loadPack(pid, false).then(function () {
       if (st && st.clues && st.clues.length && engine) {
