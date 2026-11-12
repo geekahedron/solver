@@ -111,6 +111,21 @@ check('parsed words load as an English-style pack and filter openers', function 
   assert.strictEqual(eng.flags[eng.keyIdx.get('tarps')].known, false);
 });
 
+check('Wordle’s first load is the live pack; ENABLE 5-letter stays the fallback', function () {
+  const app = fs.readFileSync(path.join(root, 'src/app.js'), 'utf8');
+  const nytAt = app.indexOf("id: 'nyt'");
+  const enAt = app.indexOf("id: 'en5'");
+  assert.ok(nytAt > 0 && enAt > nytAt);
+  assert.ok(app.indexOf("var packId = 'nyt'") !== -1);
+  assert.ok(app.indexOf("? st.packId : 'nyt'") !== -1);
+  assert.ok(app.indexOf('ENABLE — English 5-letter (reference)') !== -1);
+  assert.ok(app.indexOf('Wordle — English 5-letter') === -1);
+  assert.ok(app.indexOf("fallbackId: 'en5'") !== -1);
+  assert.ok(app.indexOf('api/wordlebot.php') !== -1);
+  assert.ok(app.indexOf('geek-solver-wordlebot') === -1);
+  assert.ok(app.indexOf('indexedDB') === -1 && app.indexOf('IndexedDB') === -1);
+});
+
 check('fallback keeps a ready pack and otherwise loads English', function () {
   assert.deepStrictEqual(ListParse.choosePackFallback({
     haveReady: true, previousId: 'en5', requestedId: 'nyt'

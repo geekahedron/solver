@@ -49,8 +49,12 @@
           </select>
         </label>
       </div>
-      <p class="muted small" id="nytAbout">Third-party copy of the NYT WordleBot lists, loaded live from <a href="https://github.com/WordGamesBot/wordgamesbot.github.io">WordGamesBot</a> (<code>WordLists/NYT/*.js</code> on the default branch). Not an official NYT download. A reload fetches the lists again. If the fetch fails, times out, or the file is not a plausible 5-letter list, the page keeps the pack already loaded, or the built-in English pack when nothing is loaded yet. Opening Analysis still stops at “Max guesses to score” (default 12,000), so a larger guess list is letter-coverage filtered. Opener bits score the ten quick picks. Scan and Build tree keep their existing time limit.</p>
+      <p class="muted small" id="nytAbout">Wordle’s default lists. A third-party copy of the NYT WordleBot lists from <a href="https://github.com/WordGamesBot/wordgamesbot.github.io">WordGamesBot</a> (<code>WordLists/NYT/*.js</code>). Not an official NYT download. This site keeps a copy and asks WordGamesBot at most once every 24 hours. If WordGamesBot cannot be reached, the last good copy stays in use. A preview without that cache loads the files directly. If neither works, the ENABLE 5-letter reference pack is shown. The word lists are not saved in this browser. Opening Analysis still stops at “Max guesses to score” (default 12,000). Opener bits score the ten quick picks.</p>
       <p class="muted small" id="nytCounts" role="status"></p>
+      <div class="row-btns">
+        <button type="button" id="nytCheck" class="ghost">Check now</button>
+        <span class="muted small">Asks this host to refresh. A copy under 24 hours old is kept.</span>
+      </div>
     </div>
     <div class="grid3">
       <label>Word length <input type="number" id="cfgL" min="1" max="20" value="5"></label>
@@ -85,7 +89,7 @@
       <button type="button" id="applyBtn">Apply setup</button>
       <span id="packMsg" class="muted"></span>
     </div>
-    <p class="muted small">Built-in English presets are one pack (<code>packs/wordle-en.json</code>): a known answer list, a larger guess list, and Wordle feedback. The WordleBot preset fetches its lists live and does not replace those files. Guess mode and the solution layer sit on the loaded pack. Apply setup uses the text in the boxes; choosing a WordleBot list above fetches that file again.</p>
+    <p class="muted small">Wordle opens on the NYT WordleBot lists from this host’s cache. ENABLE presets (<code>packs/wordle-en.json</code>, 4–8 letters, including a 5-letter reference list) stay in the menu for other word games. Guess mode and the solution layer sit on the loaded pack. Apply setup uses the text in the boxes; choosing a WordleBot list above uses the cached copy.</p>
   </details>
   <p id="packWarn" class="warn small" hidden role="status"></p>
 
@@ -251,7 +255,7 @@
 </main>
 
 <footer class="foot">
-  <p>Runs entirely in your browser — nothing is uploaded. Built-in English packs: ENABLE word list (public domain); answer subsets chosen by word frequency. The WordleBot pack loads a third-party copy of the NYT lists live from <a href="https://github.com/WordGamesBot/wordgamesbot.github.io">WordGamesBot</a>. See <a href="README.txt">README</a>.</p>
+  <p>Runs entirely in your browser — nothing is uploaded. Wordle’s default lists are a third-party copy of the NYT WordleBot lists, loaded live from <a href="https://github.com/WordGamesBot/wordgamesbot.github.io">WordGamesBot</a>. ENABLE packs (public domain; answer subsets chosen by word frequency) remain available for other lengths and as the 5-letter reference. See <a href="README.txt">README</a>.</p>
 </footer>
 <script src="core.js"></script>
 <script src="tree.js"></script>

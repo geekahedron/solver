@@ -22,7 +22,7 @@ Built-in word lists load with `fetch`, which browsers block from `file://`. Use 
 
 ## Word lists
 
-The built-in English packs (4–8 letters) are **not** the New York Times Wordle lists. A separate preset, **Wordle — NYT WordleBot lists (live)**, fetches a third-party copy at load time. The default pack stays the built-in English 5-letter list.
+Wordle opens on **Wordle — NYT WordleBot lists (live)**: a third-party copy of the NYT WordleBot lists, fetched when the page loads. The ENABLE packs (4–8 letters) stay in the menu for other word games. **ENABLE — English 5-letter (reference)** is the bundled alternative, and it is what the page shows if the live fetch fails before any pack is ready.
 
 - Guess lists (`src/packs/englishN-guesses.txt`): every N-letter word in ENABLE (Enhanced North American Benchmark Lexicon), which is in the public domain. The copy used to build them is [dolph/dictionary](https://github.com/dolph/dictionary) `enable1.txt`.
 - Answer lists (`src/packs/englishN-answers.txt`): a subset of those ENABLE words (simple `-s` / `-ed` inflections dropped, a few slurs removed), ranked with Peter Norvig’s [`count_1w.txt`](https://norvig.com/ngrams/). Only that frequency ranking was used. The shipped lists contain ENABLE words only.
@@ -31,7 +31,9 @@ The built-in English packs (4–8 letters) are **not** the New York Times Wordle
 
 ### WordleBot lists (live)
 
-Game setup can load **Wordle — NYT WordleBot lists (live)**. The page fetches JavaScript files from [WordGamesBot](https://github.com/WordGamesBot/wordgamesbot.github.io) and reads the quoted 5-letter words out of `const name = ["CRANE", …]`. It does not evaluate those files, and it does not commit a copy of the lists. `raw.githubusercontent.com` sends `Access-Control-Allow-Origin: *`, so the browser can read them. The URLs use `HEAD`, which is that repo’s default branch, so a reload picks up their updates (the browser revalidates; GitHub’s own cache is about five minutes). Lists already fetched in this visit are reused when you switch the menus.
+The page asks this site for the lists (`api/wordlebot.php`). The script keeps one JSON file and reads the quoted words out of WordGamesBot’s `const name = ["CRANE", …]` files. It does not evaluate them, and the lists are not committed and not stored in the browser. A copy younger than 24 hours is served without calling GitHub. An older or missing copy is fetched from the raw URLs (12 second timeout). **Check now** uses that same rule, so it cannot force a GitHub fetch. If the fetch or the parse fails, the last good file is kept and a later try waits 15 minutes. With no file at all, the page shows the ENABLE 5-letter pack.
+
+`python3 -m http.server` does not run PHP, so a local preview fetches WordGamesBot directly. `php -S 127.0.0.1:18432 -t src` uses the cache.
 
 | Menu | Default | File | What it is |
 | --- | --- | --- | --- |
@@ -42,7 +44,7 @@ Game setup can load **Wordle — NYT WordleBot lists (live)**. The page fetches 
 
 The guess file includes the answers. Counts in the setup card are the lists after that load. The ten English quick picks (SLATE through LATER) are the opener list, and any word that is not a legal guess is dropped, same as the other English lengths.
 
-A fetch that fails, times out (12 seconds), or does not look like a plausible 5-letter list (HTML, a non-array file, or a count outside the pack’s minimum and maximum) leaves the pack you already had on screen. If nothing has loaded yet, the page loads the built-in English 5-letter pack and says why. The WordleBot lists are a public copy of the NYT WordleBot lists, not an official NYT download.
+A fetch that fails, times out (12 seconds), or does not look like a plausible 5-letter list (HTML, a non-array file, or a count outside the pack’s minimum and maximum) leaves the pack you already had on screen and says why. On a first visit, when nothing is loaded yet, the page shows the ENABLE 5-letter reference pack instead of a blank screen. The WordleBot lists are a public copy of the NYT WordleBot lists, not an official NYT download.
 
 Opening Analysis still uses “Max guesses to score” (default 12,000). `Words.js` is larger than that, so an opening is letter-coverage filtered instead of scoring every guess. With 40 or fewer answers left, expected steps still scores the whole guess list, because it is under the existing 20,000-row cap. Opener bits score only the ten quick picks. Scan openers and Build tree keep the existing per-tree time limit.
 
@@ -59,13 +61,24 @@ Opening Analysis still uses “Max guesses to score” (default 12,000). `Words.
 | `src/worker.js` | Scoring off the UI thread |
 | `src/app.js` | Clues, packs, breakdown |
 | `src/list-parse.js` | Parse a remote `const` array of words without evaluating it |
-| `src/packs/wordle-en.json` | English 4–8 pack (points at the list files) |
-| `src/packs/wordle-nyt.json` | Live WordleBot pack (URLs only; lists are not committed) |
+| `src/api/wordlebot.php` | Host cache for the WordleBot lists (24 hours, last good copy kept) |
+| `src/data/wordlebot/` | Cache file written by that script. Not web-readable |
+| `src/packs/wordle-en.json` | ENABLE 4–8 pack (points at the list files) |
+| `src/packs/wordle-nyt.json` | Wordle pack (URLs only; lists are not committed) |
 | `src/packs/englishN-*.txt` | Built-in lists, N = 4..8 |
 | `src/packs/rules/wordle.js` | Optional validator script (the presets use the builtin) |
 | `docs/pack-format.md` | Pack JSON shape |
 
-Deploy the files in `src/` as static assets (for example `public_html/tools/solver/`). No build step and no server.
+Deploy the files in `src/` to `public_html/tools/solver/`. Do not edit the account’s root `.htaccess`. `data/.htaccess` ships with the solver and denies web access to the cache directory.
+
+PHP writes `data/wordlebot/cache.json` on the first Wordle load. The directory has to be writable by PHP:
+
+```bash
+mkdir -p data/wordlebot
+chmod 775 data data/wordlebot
+```
+
+There is no build step. Wordle works without PHP (the page then reads WordGamesBot directly), and the hosted copy uses the cache so a missing upstream still has the last good lists.
 
 ## Game pack
 
@@ -76,7 +89,7 @@ One pack describes a game. The page then toggles how you play it:
 - **Page** — Scenario (remaining lists), Analysis (pattern partitions and scores), Tree (one opener’s solve tree), or both.
 - **Guarantee** — on Analysis, keep only guesses that can be proved to finish every remaining answer in at most n further guesses (default 6 minus clues entered), under the same guess mode and hard-mode rules on every later step. Max steps is that multi-ply worst case. The one-ply Worst column is unchanged. When scoring is fewest expected steps, survivors stay ordered by that average.
 
-The English presets are that one pack: `src/packs/wordle-en.json`, the ENABLE lists, and Wordle `consistent` / feedback. Dungleon is a second built-in pack (`src/packs/dungleon.json`): case-sensitive entity letters, any 5-token guess, a known list of 397 unique previous solutions, and a theoretical pool generated from the dungeon rules. Clues use five marks (`r`, `y`, `Y`, `g`, `G`). Custom paste and upload still build a pack in the browser. Purrdle and Mastermind are not playable here; `src/packs/mastermind-sketch.json` only reserves the shape. Details are in [docs/pack-format.md](docs/pack-format.md).
+Wordle’s menu default is the live WordleBot pack (`src/packs/wordle-nyt.json`). The ENABLE presets are `src/packs/wordle-en.json` and the list files beside it: lengths 4–8, with the 5-letter list kept as a reference and as the fallback when the live fetch cannot run. Dungleon is unchanged (`src/packs/dungleon.json`): case-sensitive entity letters, any 5-token guess, a known list of 397 unique previous solutions, and a theoretical pool generated from the dungeon rules. Clues use five marks (`r`, `y`, `Y`, `g`, `G`). Custom paste and upload still build a pack in the browser. Purrdle and Mastermind are not playable here; `src/packs/mastermind-sketch.json` only reserves the shape. Details are in [docs/pack-format.md](docs/pack-format.md).
 
 ## Expected steps
 
@@ -114,6 +127,9 @@ node test/tree.test.js
 node test/tree-status.test.js
 node test/dungleon.test.js
 node test/list-parse.test.js
+php -l src/api/wordlebot.php
+php -l src/api/wordlebot-lib.php
+php test/wordlebot-cache.php
 ```
 
 `node test/tree-ui.js` starts its own static server and clicks Build tree in Chrome (same `puppeteer-core` dependency as the smokes below). It covers a click while the pack is still loading, a click after the pack fails, a bad opener, and a worker failure whose sync fallback also throws.

@@ -20,3 +20,8 @@ node_modules/
 # Local smoke-test artifacts
 shot-*.png
 *.log
+
+# WordleBot server cache (created on the host; not a source list)
+src/data/wordlebot/cache.json
+src/data/wordlebot/refresh.lock
+src/data/wordlebot/*.tmp

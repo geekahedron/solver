@@ -1,0 +1,8 @@
+# Solver data directory. PHP on this host can read it. Web requests cannot.
+# This file ships with the solver only. Do not edit the account root .htaccess.
+<IfModule mod_authz_core.c>
+  Require all denied
+</IfModule>
+<IfModule !mod_authz_core.c>
+  Deny from all
+</IfModule>
