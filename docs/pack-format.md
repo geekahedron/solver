@@ -184,7 +184,9 @@ Dungleon ships as `src/packs/dungleon.json`. Its known list is `dungleon-prevsol
 }
 ```
 
-`sheet` is the sprite sheet for small keys, lists, and table cells. `url` must be `http` or `https`. `cellWidth` and `cellHeight` are the cell size in pixels. `columns` is how many cells sit in one row. `sprite.index` counts from the top left, row by row. `sprite.x` and `sprite.y` are the cell column and row, not pixel offsets.
+`sheet` is the sprite sheet. `url` is `http`, `https`, or a relative path such as `packs/assets/sheet.png`. `cellWidth` and `cellHeight` are the cell size in pixels. `columns` and optional `rows` are the grid. `offsetX` and `offsetY` skip a margin before the first cell. `gapX` and `gapY` are the pixels between cells. `sprite.index` counts from the top left, row by row. `sprite.col` and `sprite.row` (or `x` and `y`) are the cell, not a pixel offset.
+
+`appearance.keyboard.source` and `appearance.tiles.source` are `auto`, `image`, or `sprite`. `auto` tries the token's own image, then its sprite cell, then the letter. `image` and `sprite` use only that source, then the letter. A picture that fails to load shows the letter.
 
 `image` is a larger picture for clue tiles and the guess preview. `label` is the accessible name and, when `title` is omitted, the tooltip. `title` is the tooltip when you want different wording.
 

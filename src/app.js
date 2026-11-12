@@ -101,6 +101,7 @@
       o.appearance = engine.pack.appearance;
       o.showImages = true;
     }
+    if (!o.surface) o.surface = o.art === 'sprite' ? 'keyboard' : 'tiles';
     return o;
   }
   function tilesHTML(syms, digits, opts) {
@@ -2524,10 +2525,388 @@
     if (createTimer) clearTimeout(createTimer);
     createTimer = setTimeout(function () { createTimer = null; validateEditor(); }, 120);
   }
+  var spriteEdit = {
+    url: '', objectUrl: '', cellWidth: 32, cellHeight: 32, columns: 1, rows: 1,
+    offsetX: 0, offsetY: 0, gapX: 0, gapY: 0,
+    keyboardSource: 'auto', tilesSource: 'auto',
+    map: {}, images: {}, labels: {}, cells: [], tokens: [], selectedCell: null
+  };
+
+  function spriteSheetSpec() {
+    return {
+      columns: spriteEdit.columns, rows: spriteEdit.rows,
+      cellWidth: spriteEdit.cellWidth, cellHeight: spriteEdit.cellHeight,
+      offsetX: spriteEdit.offsetX, offsetY: spriteEdit.offsetY,
+      gapX: spriteEdit.gapX, gapY: spriteEdit.gapY
+    };
+  }
+  function readSpriteForm() {
+    function num(id, fallback) {
+      var n = parseFloat($(id) && $(id).value);
+      return isFinite(n) ? n : fallback;
+    }
+    if ($('spriteUrl')) spriteEdit.url = ($('spriteUrl').value || '').trim();
+    spriteEdit.cellWidth = Math.max(1, num('spriteCellW', 32));
+    spriteEdit.cellHeight = Math.max(1, num('spriteCellH', 32));
+    spriteEdit.columns = Math.max(1, Math.floor(num('spriteCols', 1)));
+    spriteEdit.rows = Math.max(1, Math.floor(num('spriteRows', 1)));
+    spriteEdit.offsetX = Math.max(0, num('spriteOffX', 0));
+    spriteEdit.offsetY = Math.max(0, num('spriteOffY', 0));
+    spriteEdit.gapX = Math.max(0, num('spriteGapX', 0));
+    spriteEdit.gapY = Math.max(0, num('spriteGapY', 0));
+    if ($('spriteKeySource')) spriteEdit.keyboardSource = $('spriteKeySource').value || 'auto';
+    if ($('spriteTileSource')) spriteEdit.tilesSource = $('spriteTileSource').value || 'auto';
+  }
+  function writeSpriteForm() {
+    if (!$('spriteUrl')) return;
+    $('spriteUrl').value = spriteEdit.url || '';
+    $('spriteCellW').value = spriteEdit.cellWidth;
+    $('spriteCellH').value = spriteEdit.cellHeight;
+    $('spriteCols').value = spriteEdit.columns;
+    $('spriteRows').value = spriteEdit.rows;
+    $('spriteOffX').value = spriteEdit.offsetX;
+    $('spriteOffY').value = spriteEdit.offsetY;
+    $('spriteGapX').value = spriteEdit.gapX;
+    $('spriteGapY').value = spriteEdit.gapY;
+    $('spriteKeySource').value = spriteEdit.keyboardSource;
+    $('spriteTileSource').value = spriteEdit.tilesSource;
+  }
+  function manifestAlphabet(manifest) {
+    if (!manifest) return [];
+    return Pack.alphabetTokens({
+      alphabet: manifest.alphabet,
+      delimiter: manifest.delimiter || 'none',
+      caseInsensitive: manifest.caseInsensitive !== false
+    });
+  }
+  function loadSpriteEditor(manifest) {
+    var app = (manifest && (manifest.appearance || manifest.images)) || {};
+    var sheet = app.sheet || {};
+    spriteEdit.url = typeof sheet.url === 'string' ? sheet.url : '';
+    spriteEdit.cellWidth = sheet.cellWidth || sheet.width || 32;
+    spriteEdit.cellHeight = sheet.cellHeight || sheet.height || spriteEdit.cellWidth;
+    spriteEdit.columns = sheet.columns || 1;
+    spriteEdit.rows = sheet.rows || 1;
+    spriteEdit.offsetX = sheet.offsetX || 0;
+    spriteEdit.offsetY = sheet.offsetY || 0;
+    spriteEdit.gapX = sheet.gapX || 0;
+    spriteEdit.gapY = sheet.gapY || 0;
+    spriteEdit.keyboardSource = (app.keyboard && app.keyboard.source) || 'auto';
+    spriteEdit.tilesSource = (app.tiles && app.tiles.source) || 'auto';
+    spriteEdit.cells = Array.isArray(sheet.cells) ? sheet.cells.map(function (c) { return String(c); }) : [];
+    spriteEdit.map = {};
+    spriteEdit.images = {};
+    spriteEdit.labels = {};
+    spriteEdit.tokens = manifestAlphabet(manifest);
+    spriteEdit.selectedCell = null;
+    var ents = app.entities || {};
+    Object.keys(ents).forEach(function (tok) {
+      var e = ents[tok];
+      if (!e || typeof e !== 'object') return;
+      if (typeof e.label === 'string') spriteEdit.labels[tok] = e.label;
+      if (typeof e.image === 'string') spriteEdit.images[tok] = e.image;
+      var cell = Pack.spriteCell(e.sprite, spriteEdit.columns || 1);
+      if (cell) {
+        var index = cell.index != null ? cell.index : cell.row * spriteEdit.columns + cell.col;
+        spriteEdit.map[index] = tok;
+      }
+      if (spriteEdit.tokens.indexOf(tok) < 0) spriteEdit.tokens.push(tok);
+    });
+    if (spriteEdit.objectUrl) {
+      URL.revokeObjectURL(spriteEdit.objectUrl);
+      spriteEdit.objectUrl = '';
+    }
+    writeSpriteForm();
+    var img = $('spriteSheetImg');
+    if (img) {
+      img.onload = drawSpriteGrid;
+      img.onerror = function () {
+        if ($('spriteStatus')) $('spriteStatus').textContent = 'That sheet did not load.';
+      };
+      img.src = spriteEdit.url || '';
+      if (img.complete) drawSpriteGrid();
+    }
+    renderSpriteTokens();
+    renderSpriteMapTable();
+    renderSpriteImageTable();
+    renderSpritePreview();
+  }
+  function drawSpriteGrid() {
+    readSpriteForm();
+    var img = $('spriteSheetImg');
+    var grid = $('spriteGrid');
+    if (!img || !grid) return;
+    grid.textContent = '';
+    var nw = img.naturalWidth || 0;
+    var nh = img.naturalHeight || 0;
+    if (!nw || !nh) {
+      if ($('spriteStatus') && !img.getAttribute('src')) $('spriteStatus').textContent = 'Load a sheet to see the grid.';
+      return;
+    }
+    var maxW = 720;
+    var scale = nw > maxW ? maxW / nw : 1;
+    img.style.width = Math.round(nw * scale) + 'px';
+    img.style.height = Math.round(nh * scale) + 'px';
+    var cols = spriteEdit.columns;
+    var rows = spriteEdit.rows;
+    var i, col, row, x, y, btn, cap;
+    for (i = 0; i < cols * rows; i++) {
+      col = i % cols;
+      row = Math.floor(i / cols);
+      x = spriteEdit.offsetX + col * (spriteEdit.cellWidth + spriteEdit.gapX);
+      y = spriteEdit.offsetY + row * (spriteEdit.cellHeight + spriteEdit.gapY);
+      btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'sprite-cell' + (spriteEdit.selectedCell === i ? ' on' : '');
+      btn.style.left = (x * scale) + 'px';
+      btn.style.top = (y * scale) + 'px';
+      btn.style.width = Math.max(8, spriteEdit.cellWidth * scale) + 'px';
+      btn.style.height = Math.max(8, spriteEdit.cellHeight * scale) + 'px';
+      btn.setAttribute('data-cell', String(i));
+      btn.appendChild(document.createTextNode(String(i)));
+      if (spriteEdit.map[i]) {
+        cap = document.createElement('span');
+        cap.textContent = spriteEdit.map[i];
+        btn.appendChild(cap);
+      }
+      grid.appendChild(btn);
+    }
+    if ($('spriteStatus')) {
+      if (spriteEdit.selectedCell == null) {
+        $('spriteStatus').textContent = 'Click a numbered cell, then a token. ' + cols + ' by ' + rows + ' cells.';
+      } else {
+        var code = spriteEdit.cells[spriteEdit.selectedCell] || '';
+        var tok = spriteEdit.map[spriteEdit.selectedCell] || '';
+        $('spriteStatus').textContent = 'Cell ' + spriteEdit.selectedCell + (code ? ' (' + code + ')' : '') +
+          (tok ? ' is ' + tok : ' is not mapped') + '. Click a token to assign it.';
+      }
+    }
+  }
+  function assignCell(index, token) {
+    var prev;
+    Object.keys(spriteEdit.map).forEach(function (k) {
+      if (spriteEdit.map[k] === token) delete spriteEdit.map[k];
+    });
+    if (token) spriteEdit.map[index] = token;
+    else delete spriteEdit.map[index];
+    spriteEdit.selectedCell = index;
+    drawSpriteGrid();
+    renderSpriteTokens();
+    renderSpriteMapTable();
+    renderSpritePreview();
+  }
+  function renderSpriteTokens() {
+    var box = $('spriteTokens');
+    if (!box) return;
+    box.textContent = '';
+    spriteEdit.tokens.forEach(function (tok) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'ghost mini' + (spriteEdit.selectedCell != null && spriteEdit.map[spriteEdit.selectedCell] === tok ? ' on' : '');
+      b.textContent = (spriteEdit.labels[tok] ? spriteEdit.labels[tok] + ' ' : '') + tok;
+      b.setAttribute('data-token', tok);
+      box.appendChild(b);
+    });
+  }
+  function renderSpriteMapTable() {
+    var table = $('spriteMapTable');
+    if (!table || !table.tBodies[0]) return;
+    var body = table.tBodies[0];
+    body.textContent = '';
+    var n = spriteEdit.columns * spriteEdit.rows;
+    var i, tr, td, sel, opt;
+    for (i = 0; i < n; i++) {
+      tr = document.createElement('tr');
+      td = document.createElement('td');
+      td.textContent = String(i);
+      tr.appendChild(td);
+      td = document.createElement('td');
+      td.textContent = spriteEdit.cells[i] || '';
+      tr.appendChild(td);
+      td = document.createElement('td');
+      sel = document.createElement('select');
+      sel.setAttribute('data-map', String(i));
+      opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = '—';
+      sel.appendChild(opt);
+      spriteEdit.tokens.forEach(function (tok) {
+        opt = document.createElement('option');
+        opt.value = tok;
+        opt.textContent = tok;
+        if (spriteEdit.map[i] === tok) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      td.appendChild(sel);
+      tr.appendChild(td);
+      body.appendChild(tr);
+    }
+  }
+  function renderSpriteImageTable() {
+    var table = $('spriteImageTable');
+    if (!table || !table.tBodies[0]) return;
+    var body = table.tBodies[0];
+    body.textContent = '';
+    spriteEdit.tokens.forEach(function (tok) {
+      var tr = document.createElement('tr');
+      var td = document.createElement('td');
+      td.textContent = tok;
+      tr.appendChild(td);
+      td = document.createElement('td');
+      var lab = document.createElement('input');
+      lab.type = 'text';
+      lab.value = spriteEdit.labels[tok] || '';
+      lab.setAttribute('data-label', tok);
+      td.appendChild(lab);
+      tr.appendChild(td);
+      td = document.createElement('td');
+      var url = document.createElement('input');
+      url.type = 'text';
+      url.value = spriteEdit.images[tok] || '';
+      url.spellcheck = false;
+      url.setAttribute('data-image', tok);
+      td.appendChild(url);
+      tr.appendChild(td);
+      td = document.createElement('td');
+      if (spriteEdit.images[tok] && Pack.isPresentationUrl(spriteEdit.images[tok])) {
+        var thumb = document.createElement('img');
+        thumb.className = 'thumb';
+        thumb.alt = '';
+        thumb.src = spriteEdit.images[tok];
+        td.appendChild(thumb);
+      }
+      tr.appendChild(td);
+      body.appendChild(tr);
+    });
+  }
+  function faceFor(tok, source) {
+    var image = spriteEdit.images[tok];
+    var index = null;
+    Object.keys(spriteEdit.map).forEach(function (k) { if (spriteEdit.map[k] === tok) index = +k; });
+    var src = spriteEdit.objectUrl || spriteEdit.url;
+    var wantImage = source === 'image' || (source !== 'sprite' && image);
+    if (source === 'sprite') wantImage = false;
+    if (wantImage && image && Pack.isPresentationUrl(image)) {
+      var photo = document.createElement('img');
+      photo.className = 'entity-photo';
+      photo.alt = '';
+      photo.src = image;
+      return photo;
+    }
+    if (index != null && src && (source === 'sprite' || source === 'auto' || source === 'image')) {
+      if (source === 'image' && wantImage) return document.createTextNode(tok);
+      var cols = spriteEdit.columns || 1;
+      var spec = spriteSheetSpec();
+      var origin = Pack.cellOrigin(spec, index % cols, Math.floor(index / cols));
+      var m = Pack.sheetMetrics(spec);
+      var box = document.createElement('span');
+      box.className = 'entity-sprite';
+      box.style.cssText = '--cellw:' + m.cellWidth + ';--cellh:' + m.cellHeight +
+        ';--sheetw:' + m.width + ';--sheeth:' + m.height + ';--px:' + origin.x + ';--py:' + origin.y;
+      var img = document.createElement('img');
+      img.className = 'entity-img';
+      img.alt = '';
+      img.src = src;
+      box.appendChild(img);
+      return box;
+    }
+    return document.createTextNode(tok);
+  }
+  function renderSpritePreview() {
+    readSpriteForm();
+    var kb = $('spritePreviewKb');
+    var tiles = $('spritePreviewTiles');
+    if (!kb || !tiles) return;
+    kb.textContent = '';
+    tiles.textContent = '';
+    var row = document.createElement('div');
+    row.className = 'key-row';
+    var sample = document.createElement('span');
+    sample.className = 'tiles glyph';
+    spriteEdit.tokens.slice(0, 12).forEach(function (tok) {
+      var key = document.createElement('button');
+      key.type = 'button';
+      key.className = 'key art';
+      key.appendChild(faceFor(tok, spriteEdit.keyboardSource));
+      var cap = document.createElement('span');
+      cap.className = 'key-cap';
+      cap.textContent = tok;
+      key.appendChild(cap);
+      row.appendChild(key);
+      var tile = document.createElement('span');
+      tile.className = 'tile e';
+      tile.appendChild(faceFor(tok, spriteEdit.tilesSource));
+      sample.appendChild(tile);
+    });
+    kb.appendChild(row);
+    tiles.appendChild(sample);
+  }
+  function applySpriteToEditor() {
+    readSpriteForm();
+    var parsed = editorObject();
+    var msg = $('spriteMsg');
+    if (parsed.error) {
+      if (msg) msg.textContent = parsed.error;
+      return;
+    }
+    var manifest = parsed.value;
+    var app = (manifest.appearance && typeof manifest.appearance === 'object') ? manifest.appearance : {};
+    app.keyboard = { source: spriteEdit.keyboardSource };
+    app.tiles = { source: spriteEdit.tilesSource };
+    if (spriteEdit.url && !Pack.isPresentationUrl(spriteEdit.url)) {
+      if (msg) msg.textContent = 'The sheet URL must be http(s) or a relative path. A local file is preview-only.';
+      return;
+    }
+    if (spriteEdit.url) {
+      app.sheet = {
+        url: spriteEdit.url,
+        cellWidth: spriteEdit.cellWidth,
+        cellHeight: spriteEdit.cellHeight,
+        columns: spriteEdit.columns,
+        rows: spriteEdit.rows,
+        offsetX: spriteEdit.offsetX,
+        offsetY: spriteEdit.offsetY,
+        gapX: spriteEdit.gapX,
+        gapY: spriteEdit.gapY
+      };
+      if (spriteEdit.cells.length) app.sheet.cells = spriteEdit.cells.slice();
+    }
+    var entities = (app.entities && typeof app.entities === 'object') ? app.entities : {};
+    var badTok = null;
+    spriteEdit.tokens.forEach(function (tok) {
+      if (spriteEdit.images[tok] && !Pack.isPresentationUrl(spriteEdit.images[tok])) badTok = tok;
+    });
+    if (badTok) {
+      if (msg) msg.textContent = 'Image for ' + badTok + ' must be http(s) or a relative path.';
+      return;
+    }
+    spriteEdit.tokens.forEach(function (tok) {
+      var ent = (entities[tok] && typeof entities[tok] === 'object') ? entities[tok] : {};
+      if (spriteEdit.labels[tok]) ent.label = spriteEdit.labels[tok];
+      if (spriteEdit.images[tok]) ent.image = spriteEdit.images[tok];
+      delete ent.sprite;
+      entities[tok] = ent;
+    });
+    Object.keys(spriteEdit.map).forEach(function (k) {
+      var tok = spriteEdit.map[k];
+      if (!tok) return;
+      entities[tok] = entities[tok] || {};
+      entities[tok].sprite = { index: +k };
+    });
+    app.entities = entities;
+    manifest.appearance = app;
+    $('createJson').value = JSON.stringify(manifest, null, 2) + '\n';
+    onCreateEdit();
+    if (msg && !(msg.textContent && msg.textContent.indexOf('must be') >= 0)) msg.textContent = 'Wrote appearance into the editor.';
+  }
   function showCreateFile(text) {
     createFileText = text || '';
     var pre = $('createSourceView');
-    if (pre) pre.textContent = createFileText || '(empty)';
+    if (pre) {
+      pre.textContent = createFileText || '(empty)';
+      var at = createFileText.indexOf('"appearance"');
+      if (at >= 0) pre.scrollTop = Math.max(0, (createFileText.slice(0, at).split('\n').length - 2) * 19);
+    }
   }
   function loadCreateSource() {
     fillCreateSource();
@@ -2537,6 +2916,7 @@
       viewedManifest = templateManifest();
       showCreateFile(templateText());
       showCreateRules();
+      loadSpriteEditor(viewedManifest);
       return;
     }
     var pre = $('createSourceView');
@@ -2549,6 +2929,11 @@
       showCreateFile(text);
       try { viewedManifest = JSON.parse(text); } catch (e) { viewedManifest = null; }
       showCreateRules();
+      if (viewedManifest) loadSpriteEditor(viewedManifest);
+      if (src.id === 'dungleon' && $('createJson') && (!$('createJson').value.trim() || $('createJson').value.indexOf('"id": "my-game"') >= 0)) {
+        $('createJson').value = text;
+        onCreateEdit();
+      }
     }).catch(function (err) {
       showCreateFile('Could not load ' + src.file + ' (' + (err && err.message ? err.message : 'failed') + ').');
     });
@@ -2557,6 +2942,7 @@
     fillCreateSource();
     if (!createLoaded) {
       createLoaded = true;
+      if ($('createSource')) $('createSource').value = 'dungleon';
       if ($('createJson') && !$('createJson').value) $('createJson').value = templateText();
       loadCreateSource();
       onCreateEdit();
@@ -2749,6 +3135,50 @@
   }
   if ($('createTry')) $('createTry').addEventListener('click', tryCreatePack);
   if ($('createDownload')) $('createDownload').addEventListener('click', downloadCreateJson);
+  if ($('spriteGrid')) $('spriteGrid').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-cell]');
+    if (!b) return;
+    spriteEdit.selectedCell = +b.getAttribute('data-cell');
+    drawSpriteGrid();
+    renderSpriteTokens();
+  });
+  if ($('spriteTokens')) $('spriteTokens').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-token]');
+    if (!b || spriteEdit.selectedCell == null) return;
+    assignCell(spriteEdit.selectedCell, b.getAttribute('data-token'));
+  });
+  if ($('spriteMapTable')) $('spriteMapTable').addEventListener('change', function (e) {
+    var sel = e.target.closest('select[data-map]');
+    if (!sel) return;
+    assignCell(+sel.getAttribute('data-map'), sel.value);
+  });
+  if ($('spriteImageTable')) $('spriteImageTable').addEventListener('input', function (e) {
+    var lab = e.target.getAttribute('data-label');
+    var img = e.target.getAttribute('data-image');
+    if (lab != null) spriteEdit.labels[lab] = e.target.value;
+    if (img != null) spriteEdit.images[img] = e.target.value.trim();
+    renderSpritePreview();
+  });
+  ['spriteCellW', 'spriteCellH', 'spriteCols', 'spriteRows', 'spriteOffX', 'spriteOffY', 'spriteGapX', 'spriteGapY', 'spriteKeySource', 'spriteTileSource'].forEach(function (id) {
+    if (!$(id)) return;
+    $(id).addEventListener('input', function () { readSpriteForm(); drawSpriteGrid(); renderSpritePreview(); });
+    $(id).addEventListener('change', function () { readSpriteForm(); drawSpriteGrid(); renderSpriteMapTable(); renderSpritePreview(); });
+  });
+  if ($('spriteUrl')) $('spriteUrl').addEventListener('change', function () {
+    readSpriteForm();
+    if (!spriteEdit.objectUrl && $('spriteSheetImg')) $('spriteSheetImg').src = spriteEdit.url;
+    renderSpritePreview();
+  });
+  if ($('spriteFile')) $('spriteFile').addEventListener('change', function () {
+    var f = this.files && this.files[0];
+    if (!f) return;
+    if (spriteEdit.objectUrl) URL.revokeObjectURL(spriteEdit.objectUrl);
+    spriteEdit.objectUrl = URL.createObjectURL(f);
+    if ($('spriteSheetImg')) $('spriteSheetImg').src = spriteEdit.objectUrl;
+    if ($('spriteStatus')) $('spriteStatus').textContent = 'Local sheet loaded for preview only. It is not saved in the JSON.';
+    renderSpritePreview();
+  });
+  if ($('spriteApply')) $('spriteApply').addEventListener('click', applySpriteToEditor);
   if ($('createImport')) $('createImport').addEventListener('change', function () {
     var input = this;
     var f = input.files && input.files[0];
