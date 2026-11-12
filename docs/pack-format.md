@@ -141,6 +141,29 @@ Scenario shows both counts (and both lists). Analysis partitions whichever layer
 
 **Tree** fixes one starting guess and expands that policy against the active answer list. It walks pattern → next guess, lists per-answer depth, and highlights answers over n. A long hard-mode list uses a letter-coverage shortlist for later guesses and says so. It does not replace the guarantee checkbox, which still fails closed when a line is unproved. The built-in English lists are not the NYT Wordle list Olson’s precomputed trees use.
 
+## Gauntlet
+
+`gauntlet` is optional and pack-level. Only a pack that sets it shows a Normal / Gauntlet toggle. Other packs, Tree, Analysis, Create, and the WordleBot cache are unchanged. It is not a multi-round mode for every game. A variant cannot turn it on.
+
+```json
+"gauntlet": { "floors": 3 }
+```
+
+`true` means three floors. `floors` is an integer from 2 to 6. Dungleon sets three. The page stacks every floor on one screen. Each floor has its own guesses, clue marks, candidate lists, and suggested openers. The state is saved with the rest of the page state in this browser.
+
+The rule is that one entity (one token, in any slot) appears in every floor’s solution.
+
+- Floor 1 is filtered only by its own clues.
+- A floor’s solution is the text in its solution box when that text is a full word, otherwise the latest all-correct guess on that floor, otherwise the single answer left on the active solution layer (known, theoretical, or known preferred). A unique answer on the other layer does not count until you type it or switch layer.
+- Once floor 1 has a solution, floor 2 keeps candidates whose tokens intersect that solution. Both the known list and the theoretical list are filtered.
+- Floor 3, and any later floor, keeps candidates that intersect the entities shared by every earlier solved floor. With three floors that is the entities present in both floor 1 and floor 2.
+- Before every earlier floor is solved, and only after floor 1 is known, a later floor uses a bound instead of the exact intersection. An unsolved earlier floor contributes the entities that still appear in at least one of its remaining candidates on that same layer, after that floor’s clues and after the shared-entity filter already applied to it. The allowed set is the running intersection. A candidate is removed only when it cannot meet the rule for any combination that is still possible. When the missing floor is solved, the set shrinks to the exact shared entities. For the usual three-floor game, before floor 2 is solved, floor 3’s allowed set is floor 1’s entities ∩ (entities still present on floor 2).
+- If floor 1 has no solution yet, later floors are not filtered, even if a later solution was typed.
+- Clearing or editing a solution recomputes every floor below it. Earlier floors are not filtered by later ones.
+- An empty shared set means no candidate can satisfy the rule, so that layer’s list is empty.
+
+Each floor ranks openers against its filtered active-layer answers with the same expected-information score Scan openers uses (top 10). An authored opener list, if the pack has one, stays in that order and the bits are rescored on the floor’s answers. Dungleon has no authored list, so floors 2 and 3 get a new top 10 once their candidate pools narrow. The page does not expand alphabet^length, and the same candidate cap applies.
+
 ## Renderers
 
 `tokenRenderer` and `clueRenderer` are ids into the page’s asset libraries (`src/renderers.js`):
@@ -154,7 +177,7 @@ Scenario shows both counts (and both lists). Analysis partitions whichever layer
 | `clues/arrows-lr` | `· ← →` for a future left/right clue |
 | `clues/mastermind-pips` | A `2B1W` style summary if marks are 0/1/2 |
 
-Dungleon ships as `src/packs/dungleon.json`. Its known list is `dungleon-prevsolutions.txt` (397 unique official dungeons from the previous-solutions history, not the longer generated set). Rules are in `rules/dungleon.js`. Purrdle still needs a real pack. It is not shipped.
+Dungleon ships as `src/packs/dungleon.json`. Its known list is `dungleon-prevsolutions.txt` (397 unique official dungeons from the previous-solutions history, not the longer generated set). Rules are in `rules/dungleon.js`. It is the only pack that sets `gauntlet` (three floors; see above). Purrdle still needs a real pack. It is not shipped.
 
 ## Appearance
 

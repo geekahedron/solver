@@ -94,16 +94,22 @@
   </details>
   <p id="packWarn" class="warn small" hidden role="status"></p>
 
+  <div class="page-modes" id="gauntletModes" hidden>
+    <span class="muted small">Mode</span>
+    <button type="button" class="ghost on" data-gauntlet="normal" aria-pressed="true">Normal</button>
+    <button type="button" class="ghost" data-gauntlet="gauntlet" aria-pressed="false">Gauntlet</button>
+  </div>
+
   <!-- CLUES -->
   <section class="card" id="cluesCard">
-    <h2>Clues so far</h2>
-    <div class="clue-entry">
+    <h2 id="cluesHeading">Clues so far</h2>
+    <div class="clue-entry gauntlet-hide">
       <input type="text" id="clueGuess" placeholder="guess (e.g. slate)" autocomplete="off" autocapitalize="off" spellcheck="false">
       <input type="text" id="cluePat" placeholder="result (e.g. bgybb / rgyrr / rgyYG / 🟩🟨⬛)" autocomplete="off" autocapitalize="off" spellcheck="false">
       <button type="button" id="addClueBtn">Add</button>
     </div>
-    <div class="tiles-preview" id="cluePreview" title="Tap a tile to cycle gray → yellow → green"></div>
-    <p class="muted small">Result codes: green <b>G</b>/2/c/🟩 · yellow <b>Y</b>/1/p/o/🟨 · gray <b>B</b>/R/X/W/0/-/.&nbsp;/⬛/⬜. Or type the guess and tap tiles. A pack with more marks (Dungleon) cycles every mark.</p>
+    <div class="tiles-preview gauntlet-hide" id="cluePreview" title="Tap a tile to cycle gray → yellow → green"></div>
+    <p class="muted small gauntlet-hide">Result codes: green <b>G</b>/2/c/🟩 · yellow <b>Y</b>/1/p/o/🟨 · gray <b>B</b>/R/X/W/0/-/.&nbsp;/⬛/⬜. Or type the guess and tap tiles. A pack with more marks (Dungleon) cycles every mark.</p>
     <div class="keyboard-wrap" id="keyboardWrap">
       <div class="row-btns">
         <button type="button" id="keyboardToggle" class="ghost" aria-expanded="true" aria-controls="keyboard">Hide keyboard</button>
@@ -112,9 +118,11 @@
       <div id="keyboard" class="keyboard" role="group" aria-label="Guess keyboard"></div>
       <p class="muted small" id="keyboardHint">Keys type into the highlighted box. Backspace and Enter follow that box. The physical keyboard still works. Pictures are only how a token is drawn; the letter code is still the guess.</p>
     </div>
-    <div id="clueList"></div>
-    <div class="row-btns"><button type="button" id="undoBtn" class="ghost">Undo last</button><button type="button" id="clearBtn" class="ghost">Clear all</button></div>
+    <div id="clueList" class="gauntlet-hide"></div>
+    <div class="row-btns gauntlet-hide"><button type="button" id="undoBtn" class="ghost">Undo last</button><button type="button" id="clearBtn" class="ghost">Clear all</button></div>
   </section>
+
+  <section class="card" id="gauntletBoard" hidden></section>
 
   <!-- REMAINING (scenario) -->
   <section class="card" id="scenarioCard">
@@ -376,6 +384,8 @@
         <dd><code>any</code> — any tokens of the right length may be typed. Suggestions stay on the loaded lists. <code>dictionary</code> — <code>validGuess</code> (the lists). <code>hard</code> — the guess must fit every clue. <code>answersOnly</code> — only rows still in the active remaining layer. Wordle hard (reuse greens and yellows) is a separate, weaker switch on the Analysis card.</dd>
         <dt><code>openers</code></dt>
         <dd>Starter guesses, on the pack or on one variant. A variant array replaces the pack list. The Tree quick picks use that list, in order, after dropping words that are not legal guesses. Omit it and the page ranks a bounded set by expected information.</dd>
+        <dt><code>gauntlet</code></dt>
+        <dd>Optional and pack-level. <code>true</code> or <code>{ "floors": 3 }</code> (an integer from 2 to 6) adds a Normal / Gauntlet toggle for this pack only. Dungleon uses three floors. One entity has to appear in every floor. A variant cannot set this.</dd>
         <dt><code>tokenRenderer</code>, <code>clueRenderer</code></dt>
         <dd>Tile chrome: <code>tiles/letters</code>, <code>tiles/cards</code>, <code>tiles/dungleon</code> (letters without forced capitals). Clues: <code>clues/wordle-gyb</code>, <code>clues/arrows-lr</code>, <code>clues/mastermind-pips</code>. These pick the tile shape. Pictures come from <code>appearance</code>.</dd>
         <dt><code>appearance</code> <small>(alias <code>images</code>)</small></dt>
@@ -415,6 +425,7 @@
 </footer>
 <script src="core.js"></script>
 <script src="tree.js"></script>
+<script src="gauntlet.js"></script>
 <script src="pack.js"></script>
 <script src="engine.js"></script>
 <script src="renderers.js"></script>

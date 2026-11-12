@@ -23,7 +23,23 @@ body[data-page="create"] #cluesCard,
 body[data-page="create"] #scenarioCard,
 body[data-page="create"] #analysis,
 body[data-page="create"] #treeCard,
-body[data-page="create"] #packWarn{display:none}
+body[data-page="create"] #packWarn,
+body[data-page="create"] #gauntletModes,
+body[data-page="create"] #gauntletBoard{display:none}
+body[data-gauntlet="on"] .gauntlet-hide{display:none}
+body[data-gauntlet="on"] #scenarioCard{display:none}
+.gauntlet-floor{border:1px solid var(--line);border-radius:10px;padding:12px;margin:12px 0;background:var(--navy)}
+.gauntlet-floor.focus{border-color:var(--orange)}
+.gauntlet-floor h3{margin:0;font-size:16px}
+.gauntlet-floor h4{margin:12px 0 6px;font-size:14px}
+.gauntlet-head{display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
+.gauntlet-chips{display:inline-flex;flex-wrap:wrap;gap:8px;align-items:center;vertical-align:middle}
+.gauntlet-chip{display:inline-flex;align-items:center;gap:4px}
+.gauntlet-code{font-family:ui-monospace,Menlo,Consolas,monospace;font-weight:700;text-transform:none}
+.gauntlet-must{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.gauntlet-sol{display:flex;flex-direction:row;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px;color:var(--ink)}
+label.gauntlet-sol input[type=text]{width:14em;max-width:100%;flex:0 0 auto}
+.gauntlet-openers{margin-top:4px}
 .opener-picks{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
 .opener-picks button{font-family:ui-monospace,Menlo,Consolas,monospace}
 .opener-picks button.on{background:var(--orange);color:#1a0d00;border-color:var(--orange)}

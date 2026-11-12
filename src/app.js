@@ -6,7 +6,9 @@
   var Pack = window.SolverPack;
   var Renderers = window.SolverRenderers;
   var TreeStatus = window.SolverTreeStatus;
+  var Gauntlet = window.SolverGauntlet;
   if (!TreeStatus) throw new Error('tree-status.js failed to load');
+  if (!Gauntlet) throw new Error('gauntlet.js failed to load');
   var LS_KEY = 'geek-solver-packs-v1', LS_JSON = 'geek-solver-json-packs-v1', LS_STATE = 'geek-solver-state-v1';
 
   var BUILTIN = [
@@ -43,6 +45,15 @@
   var packError = '';
   var packGen = 0;
   var clues = [];
+  var gauntlet = { mode: 'normal', focus: 0, floors: [] };
+  var gauntletView = null;
+  var gauntletOpenerCache = { gen: -1, map: Object.create(null) };
+  function blankGauntletFloor(list) {
+    return { clues: list || [], solution: '', draftGuess: '', draftPat: '', previewDigits: null };
+  }
+  gauntlet.floors.push(blankGauntletFloor(clues));
+  gauntlet.floors.push(blankGauntletFloor());
+  gauntlet.floors.push(blankGauntletFloor());
   var remaining = [];
   var remKnown = [];
   var remTheo = [];
@@ -322,7 +333,7 @@
     $(id).addEventListener('input', renderPreview);
   });
   $('undoBtn').addEventListener('click', function () { clues.pop(); refresh(); });
-  $('clearBtn').addEventListener('click', function () { clues = []; refresh(); });
+  $('clearBtn').addEventListener('click', function () { clues.splice(0, clues.length); refresh(); });
 
   // ---------- scoring (worker) ----------
   function layerLabel() {
@@ -481,12 +492,524 @@
     }
   }
 
+  function gauntletFloors() {
+    var n = engine && engine.pack && engine.pack.gauntlet && engine.pack.gauntlet.floors;
+    if (n >= 2 && n <= 6) return n;
+    return gauntlet.floors.length >= 2 ? gauntlet.floors.length : 3;
+  }
+  function ensureGauntletFloors(n) {
+    if (!n || n < 2) n = 3;
+    if (n > 6) n = 6;
+    while (gauntlet.floors.length < n) gauntlet.floors.push(blankGauntletFloor());
+    while (gauntlet.floors.length > n) gauntlet.floors.pop();
+    if (!gauntlet.floors[0]) gauntlet.floors[0] = blankGauntletFloor(clues);
+  }
+  function gauntletSupported() {
+    return !!(engine && engine.pack && engine.pack.gauntlet && engine.pack.gauntlet.floors >= 2);
+  }
+  function gauntletActive() {
+    return gauntlet.mode === 'gauntlet' && gauntletSupported();
+  }
+  function syncGauntletMode() {
+    ensureGauntletFloors(gauntletFloors());
+    if (!gauntletSupported()) gauntlet.mode = 'normal';
+    if (!gauntletActive()) {
+      clues = gauntlet.floors[0].clues;
+      return;
+    }
+    if (gauntlet.focus < 0 || gauntlet.focus >= gauntlet.floors.length) gauntlet.focus = 0;
+    clues = gauntlet.floors[gauntlet.focus].clues;
+  }
+  function syncGauntletChrome() {
+    var supported = gauntletSupported();
+    var on = supported && gauntlet.mode === 'gauntlet';
+    document.body.setAttribute('data-gauntlet', on ? 'on' : 'off');
+    var modes = $('gauntletModes');
+    if (modes) {
+      modes.hidden = !supported;
+      Array.prototype.forEach.call(modes.querySelectorAll('button'), function (b) {
+        var which = b.getAttribute('data-gauntlet');
+        var active = on ? which === 'gauntlet' : which === 'normal';
+        b.classList.toggle('on', active);
+        b.setAttribute('aria-pressed', active ? 'true' : 'false');
+      });
+    }
+    var board = $('gauntletBoard');
+    if (board) board.hidden = !on;
+    var heading = $('cluesHeading');
+    if (heading) heading.textContent = on ? 'Keyboard' : 'Clues so far';
+  }
+  function reencodeClueList(list) {
+    var next = [];
+    list.forEach(function (c) {
+      var g = engine.encode(c.key);
+      if (!g.err && c.digits && c.digits.length === cfg.L) next.push(Object.assign(c, { ids: g.ids, syms: g.syms, word: g.word }));
+    });
+    list.splice(0, list.length);
+    next.forEach(function (c) { list.push(c); });
+  }
+  function restoreClueList(list, saved) {
+    list.splice(0, list.length);
+    (saved || []).forEach(function (c) {
+      if (!c || !engine) return;
+      var g = engine.encode(c.key);
+      if (!g.err && c.digits && c.digits.length === cfg.L) {
+        var made = engine.makeClue(g.key, c.digits);
+        list.push({ key: made.key, ids: made.ids, syms: made.syms, digits: made.digits, pat: made.pat, word: made.word, clue: made.clue, note: validityNote(made.key) });
+      }
+    });
+  }
+  function pinnedKey(text) {
+    if (!text || !String(text).trim() || !engine) return null;
+    var enc = engine.encode(String(text).trim());
+    return enc.err ? null : enc.key;
+  }
+  function buildGauntletView() {
+    var raw = gauntlet.floors.map(function (f) {
+      var parts = engine.replay(f.clues, cfg.layer);
+      return {
+        known: parts.known,
+        theoretical: parts.theoretical,
+        solution: pinnedKey(f.solution),
+        clueSolution: Gauntlet.solvedClue(f.clues, engine.correctValues)
+      };
+    });
+    var propagated = Gauntlet.propagate({
+      floors: raw,
+      tokensOf: function (i) { return engine.tokens[i]; },
+      tokensOfKey: function (key) { return Pack.parseWord(key, engine.pack); },
+      keyOf: function (i) { return engine.keys[i]; },
+      layer: cfg.layer || 'known',
+      order: Pack.alphabetTokens(engine.pack),
+      length: cfg.L
+    });
+    propagated.floors.forEach(function (floor, i) {
+      floor.clueKnown = raw[i].known;
+      floor.clueTheoretical = raw[i].theoretical;
+      floor.rawKnown = raw[i].known.length;
+      floor.rawTheoretical = raw[i].theoretical.length;
+    });
+    return propagated;
+  }
+  function openerSig(rem) {
+    var h1 = 2166136261, h2 = 0, i, x;
+    for (i = 0; i < rem.length; i++) {
+      x = rem[i] | 0;
+      h1 ^= x;
+      h1 = (h1 * 33 + x) | 0;
+      h2 = (h2 + x) | 0;
+    }
+    return rem.length + ':' + h1 + ':' + h2;
+  }
+  function floorOpeners(rem) {
+    if (gauntletOpenerCache.gen !== packGen) {
+      gauntletOpenerCache.gen = packGen;
+      gauntletOpenerCache.map = Object.create(null);
+    }
+    var sig = openerSig(rem) + (packDeclaredOpeners() ? ':d' : ':g');
+    if (gauntletOpenerCache.map[sig]) return gauntletOpenerCache.map[sig];
+    var ranked = Gauntlet.rankOpeners(Core, {
+      U: engine.U,
+      L: cfg.L,
+      K: engine.syms.length,
+      rule: engine.feedbackRule,
+      hooks: engine.scoringHooks,
+      rem: rem,
+      guessIdx: engine.guessIdx,
+      keys: engine.keys,
+      lookup: function (w) { return engine.keyIdx.has(w) ? engine.keyIdx.get(w) : -1; },
+      declared: packDeclaredOpeners(),
+      authored: legalAuthoredOpeners()
+    });
+    gauntletOpenerCache.map[sig] = ranked;
+    return ranked;
+  }
+  function entityChips(syms) {
+    if (!syms || !syms.length) return '';
+    return '<span class="gauntlet-chips">' + syms.map(function (s) {
+      return '<span class="gauntlet-chip" title="' + esc(entityAccessibleName(s)) + '">' +
+        tilesHTML([s], null) + '<span class="gauntlet-code">' + esc(s) + '</span></span>';
+    }).join('') + '</span>';
+  }
+  function scoringKnownSide(floor) {
+    if (cfg.layer === 'theoretical') return false;
+    if (cfg.layer === 'preferred' && !floor.known.length) return false;
+    return true;
+  }
+  function layerPhrase() {
+    if (cfg.layer === 'theoretical') return 'theoretical';
+    if (cfg.layer === 'preferred') return 'known-preferred';
+    return 'known';
+  }
+  function mustLine(label, must, status) {
+    if (status === 'impossible' || !must || !must.length) {
+      return '<p class="gauntlet-must warn">' + esc(label) + ': no shared entity is still possible.</p>';
+    }
+    return '<p class="gauntlet-must">' + esc(label) + ' ' + entityChips(must) + '</p>';
+  }
+  function constraintBlock(index, floor) {
+    var c = floor.constraint;
+    var lead = '';
+    var extra = '';
+    if (!c || c.status === 'none') {
+      lead = 'No shared-entity rule on floor 1. Solve it normally.';
+    } else if (c.status === 'waiting') {
+      lead = 'Floor 1 is still open, so this floor is not filtered yet.';
+    } else if (c.status === 'impossible' && !c.layersDiffer) {
+      lead = 'No entity is shared by the solved floors, so nothing on this floor can satisfy the rule.';
+    } else if (index === 1) {
+      lead = 'Must share an entity with floor 1.';
+    } else if (c.partial) {
+      lead = 'Earlier floors are not all solved, so the shared set below is a bound.';
+      extra = index === 2
+        ? 'Floor 2 is not solved yet, so this is a bound rather than the final shared set. It is every entity in floor 1’s solution that still appears in at least one remaining floor 2 candidate on this list. A dungeon stays only if it contains one of those entities — otherwise it cannot be in all three solutions. When floor 2 is solved, the set shrinks to the entities that are actually in both solutions.'
+        : 'An earlier floor is still open, so this is a bound: entities from the solved floors that still appear in at least one remaining candidate of each unsolved earlier floor, on this list. Solving those floors replaces the bound with the exact shared entities.';
+    } else {
+      lead = 'Must contain an entity that is in every solved floor above.';
+    }
+    var html = '<p class="gauntlet-rule">' + esc(lead) + '</p>';
+    if (c && c.status !== 'none' && c.status !== 'waiting' && !(c.status === 'impossible' && !c.layersDiffer)) {
+      if (!c.layersDiffer) html += mustLine(index === 1 ? 'Must contain one of' : 'Must contain one of', c.must, c.status);
+      else {
+        var knownSide = scoringKnownSide(floor);
+        html += mustLine('Known' + (knownSide ? ' (scoring)' : ''), c.knownMust, c.knownStatus);
+        html += mustLine('Theoretical' + (knownSide ? '' : ' (scoring)'), c.theoreticalMust, c.theoreticalStatus);
+      }
+    }
+    if (extra) html += '<p class="muted small">' + esc(extra) + '</p>';
+    return html;
+  }
+  function solutionBlock(index, floor, state) {
+    var html = '';
+    var typed = state && state.solution ? String(state.solution).trim() : '';
+    if (typed && !pinnedKey(typed)) {
+      html += '<p class="muted small" id="gSolNote' + index + '">Enter ' + cfg.L + ' tokens. Later floors update when the solution is complete.</p>';
+    } else html += '<p class="muted small" id="gSolNote' + index + '"></p>';
+    if (floor.solution) {
+      var why = floor.solutionSource === 'entered' ? 'the solution you entered'
+        : floor.solutionSource === 'clue' ? 'the all-correct guess'
+        : ('the only ' + layerPhrase() + ' answer left');
+      var tokens = Pack.parseWord(floor.solution, engine.pack);
+      html += '<p class="gauntlet-solved">Using ' + tilesHTML(tokens, null) + ' <span class="muted">(' + esc(why) + ').</span></p>';
+      if (floor.solutionSource === 'entered') {
+        var inList = false, i;
+        for (i = 0; i < floor.clueKnown.length; i++) if (engine.keys[floor.clueKnown[i]] === floor.solution) inList = true;
+        for (i = 0; i < floor.clueTheoretical.length; i++) if (engine.keys[floor.clueTheoretical[i]] === floor.solution) inList = true;
+        if (!inList && (floor.rawKnown || floor.rawTheoretical)) {
+          html += '<p class="warn small">This solution does not fit the clues on this floor. Later floors still use its entities.</p>';
+        } else if (!inList && engine.rules && !engine.rules.validSolution(tokens, engine)) {
+          html += '<p class="warn small">This is not a legal dungeon under the pack rules. Later floors still use its entities.</p>';
+        }
+      }
+    } else {
+      var hint = '';
+      if (cfg.layer === 'theoretical' && floor.clueKnown.length === 1) {
+        hint = 'The known list is down to ' + engine.keys[floor.clueKnown[0]] + '. Enter it as the solution, or switch the solution layer to Known, to filter later floors.';
+      } else if (cfg.layer === 'known' && floor.clueTheoretical.length === 1 && floor.clueKnown.length !== 1) {
+        hint = 'The theoretical list is down to ' + engine.keys[floor.clueTheoretical[0]] + '. Enter it as the solution, or switch the solution layer to Theoretical, to filter later floors.';
+      }
+      if (hint) html += '<p class="muted small">' + esc(hint) + '</p>';
+    }
+    return html;
+  }
+  function floorClueRows(list) {
+    if (!list.length) return '<p class="muted small">No clues yet.</p>';
+    return list.map(function (c, n) {
+      var left = (c.afterKnown != null && c.afterTheo != null && c.afterKnown !== c.afterTheo)
+        ? (c.afterKnown.toLocaleString() + ' known · ' + c.afterTheo.toLocaleString() + ' theoretical left after the clue')
+        : (c.after == null ? '' : c.after.toLocaleString() + ' left after the clue');
+      return '<div class="clue-row">' + tilesHTML(c.syms, c.digits) + '<span class="meta">' + esc(patCode(c.digits)) +
+        (c.note ? ' · <span class="warn">' + esc(c.note) + '</span>' : '') +
+        (left ? ' · ' + esc(left) : '') + '</span><button type="button" class="ghost mini" data-del="' + n + '">✕</button></div>';
+    }).join('');
+  }
+  function floorPreviewHTML(state) {
+    var syms = Pack.parseWord(state.draftGuess || '', activePack()).slice(0, cfg.L);
+    var digits = state.previewDigits && state.previewDigits.length === cfg.L ? state.previewDigits : new Array(cfg.L).fill(0);
+    var parsed = parsePat(state.draftPat || '');
+    if (parsed) digits = parsed;
+    while (syms.length < cfg.L) syms.push('');
+    return tilesHTML(syms, digits, { interactive: true });
+  }
+  function listDetails(floorIndex, which, idxs, label) {
+    var open = idxs.length > 0 && idxs.length <= 40;
+    var art = open && showImages() && idxs.length <= 400 ? ' art' : '';
+    return '<details class="gauntlet-list"' + (open ? ' open' : '') + '><summary>' + esc(label) +
+      '</summary><div class="wordlist' + art + '" data-floor="' + floorIndex + '" data-which="' + which + '"' +
+      (open ? ' data-filled="1"' : '') + '>' + (open ? listHTML(idxs) : '') + '</div></details>';
+  }
+  function countLabel(name, shown, raw, total) {
+    var text = name + ' (' + shown.toLocaleString() + ' / ' + total.toLocaleString();
+    if (raw !== shown) text += ', ' + raw.toLocaleString() + ' fit the clues';
+    return text + ')';
+  }
+  function openerBlock(floor) {
+    var ranked = floorOpeners(floor.active);
+    if (!ranked.words.length) return '<p class="muted small">No openers to suggest for this floor.</p>';
+    var rows = ranked.words.map(function (w, n) {
+      var bits = ranked.bits[w];
+      var text = (bits == null || bits !== bits) ? '–' : fmt(bits, 2);
+      return '<tr data-pick="' + esc(w) + '"><td>' + (n + 1) + '</td><td>' + wordHTML(w) + '</td><td>' + text + '</td></tr>';
+    }).join('');
+    var note = ranked.source === 'pack'
+      ? 'Openers come from this pack’s list, in that order. Bits are rescored against this floor’s ' + floor.active.length.toLocaleString() + ' answers.'
+      : 'Top ' + ranked.words.length + ' by expected information against this floor’s ' + floor.active.length.toLocaleString() +
+        ' answers: −∑ p log₂ p, the same score Scan openers uses.' +
+        (ranked.capped ? ' The candidate list was capped so a large pool would not hang the page.' : '');
+    return '<div class="tablewrap"><table class="data gauntlet-openers"><thead><tr><th>#</th><th>Opener</th><th>Bits</th></tr></thead><tbody>' +
+      rows + '</tbody></table></div><p class="muted small">' + esc(note) + '</p>';
+  }
+  function renderGauntletFloor(index, floor) {
+    var state = gauntlet.floors[index];
+    var focused = index === gauntlet.focus;
+    var ph = engine.pack.clueCaseSensitive ? 'rgyYG' : 'bgybb';
+    var parts = [];
+    parts.push('<section class="gauntlet-floor' + (focused ? ' focus' : '') + '" data-floor="' + index + '">');
+    parts.push('<div class="gauntlet-head"><h3>Floor ' + (index + 1) + '</h3>');
+    parts.push('<button type="button" class="ghost mini' + (focused ? ' on' : '') + '" data-focus="' + index + '" aria-pressed="' + (focused ? 'true' : 'false') + '">' +
+      (focused ? 'Focused' : 'Focus for Analysis') + '</button></div>');
+    parts.push(constraintBlock(index, floor));
+    parts.push(solutionBlock(index, floor, state));
+    parts.push('<div class="clue-entry">');
+    parts.push('<input type="text" id="gGuess' + index + '" data-gauntlet-field="guess" data-floor="' + index + '" value="' + esc(state.draftGuess || '') + '" placeholder="guess" autocomplete="off" autocapitalize="off" spellcheck="false">');
+    parts.push('<input type="text" id="gPat' + index + '" data-gauntlet-field="pat" data-floor="' + index + '" value="' + esc(state.draftPat || '') + '" placeholder="result (e.g. ' + ph.slice(0, cfg.L) + ')" autocomplete="off" autocapitalize="off" spellcheck="false">');
+    parts.push('<button type="button" data-add="' + index + '">Add</button></div>');
+    parts.push('<div class="tiles-preview gauntlet-preview" id="gPreview' + index + '" data-floor="' + index + '">' + floorPreviewHTML(state) + '</div>');
+    parts.push('<div class="gauntlet-clues">' + floorClueRows(state.clues) + '</div>');
+    parts.push('<div class="row-btns"><button type="button" class="ghost" data-undo="' + index + '">Undo last</button><button type="button" class="ghost" data-clear-clues="' + index + '">Clear clues</button></div>');
+    parts.push('<label class="gauntlet-sol">Solution <input type="text" id="gSol' + index + '" data-gauntlet-field="solution" data-floor="' + index + '" value="' + esc(state.solution || '') + '" placeholder="known dungeon" autocomplete="off" autocapitalize="off" spellcheck="false">');
+    parts.push(' <button type="button" class="ghost mini" data-clear-solution="' + index + '">Clear solution</button></label>');
+    parts.push('<p class="muted small">Known ' + floor.known.length.toLocaleString() + ' / ' + engine.nKnown.toLocaleString() +
+      ' · Theoretical ' + floor.theoretical.length.toLocaleString() + ' / ' + engine.theoreticalIdx.length.toLocaleString() +
+      (floor.rawKnown !== floor.known.length || floor.rawTheoretical !== floor.theoretical.length
+        ? ' · clues alone leave ' + floor.rawKnown.toLocaleString() + ' known and ' + floor.rawTheoretical.toLocaleString() + ' theoretical'
+        : '') + '</p>');
+    parts.push(listDetails(index, 'known', floor.known, countLabel('Known answers', floor.known.length, floor.rawKnown, engine.nKnown)));
+    parts.push(listDetails(index, 'theoretical', floor.theoretical, countLabel('Theoretical solutions', floor.theoretical.length, floor.rawTheoretical, engine.theoreticalIdx.length)));
+    parts.push('<h4>Suggested openers</h4>');
+    parts.push(openerBlock(floor));
+    parts.push('</section>');
+    return parts.join('');
+  }
+  function renderGauntletBoard(view) {
+    var board = $('gauntletBoard');
+    if (!board) return;
+    var active = document.activeElement;
+    var activeId = active && active.id && board.contains(active) ? active.id : '';
+    var selStart = active && typeof active.selectionStart === 'number' ? active.selectionStart : null;
+    var n = view.floors.length;
+    var intro = n + (n === 3
+      ? ' dungeons, back to back — one shared entity in every solution, in any slot. Floor 1 is a normal puzzle. Once its solution is known, later floors only list dungeons that can still share an entity with the solutions already known. Editing or clearing a solution recomputes the floors below it. Analysis and Tree follow the focused floor.'
+      : ' dungeons, one shared entity in every solution. Floor 1 is a normal puzzle. Later floors narrow once earlier solutions are known. Analysis and Tree follow the focused floor.');
+    board.innerHTML = '<h2>Gauntlet</h2><p class="muted small">' + esc(intro) + '</p>' +
+      view.floors.map(function (floor, i) { return renderGauntletFloor(i, floor); }).join('');
+    if (activeId) {
+      var again = document.getElementById(activeId);
+      if (again) {
+        again.focus();
+        if (selStart != null) { try { again.setSelectionRange(selStart, selStart); } catch (e2) {} }
+      }
+    }
+  }
+  function updateFloorPreview(i) {
+    var el = $('gPreview' + i);
+    var floor = gauntlet.floors[i];
+    if (!el || !floor || !engine) return;
+    var syms = Pack.parseWord(floor.draftGuess || '', activePack()).slice(0, cfg.L);
+    while (syms.length < cfg.L) syms.push('');
+    var parsed = parsePat(floor.draftPat || '');
+    if (parsed) floor.previewDigits = parsed;
+    if (!floor.previewDigits || floor.previewDigits.length !== cfg.L) floor.previewDigits = new Array(cfg.L).fill(0);
+    el.innerHTML = tilesHTML(syms, floor.previewDigits, { interactive: true });
+  }
+  function cycleFloorTile(i, tileIndex) {
+    var floor = gauntlet.floors[i];
+    if (!floor || !engine) return;
+    if (!floor.previewDigits || floor.previewDigits.length !== cfg.L) floor.previewDigits = new Array(cfg.L).fill(0);
+    var marks = engine.pack.clueAlphabet || [{ value: 0 }, { value: 1 }, { value: 2 }];
+    var cur = floor.previewDigits[tileIndex] || 0, k, at = 0;
+    for (k = 0; k < marks.length; k++) if (marks[k].value === cur) at = k;
+    floor.previewDigits[tileIndex] = marks[(at + 1) % marks.length].value;
+    floor.draftPat = patCode(floor.previewDigits).replace(/⬛/g, 'b').replace(/🟨/g, 'y').replace(/🟩/g, 'g');
+    var pat = $('gPat' + i);
+    if (pat) pat.value = floor.draftPat;
+    updateFloorPreview(i);
+  }
+  function submitFloor(i) {
+    var floor = gauntlet.floors[i];
+    if (!floor || !engine) return;
+    var guessEl = $('gGuess' + i);
+    var patEl = $('gPat' + i);
+    var raw = guessEl ? guessEl.value : (floor.draftGuess || '');
+    var pat = patEl ? patEl.value : (floor.draftPat || '');
+    var digits = parsePat(pat) || (!String(pat || '').trim() && floor.previewDigits && floor.previewDigits.length === cfg.L ? floor.previewDigits.slice() : null);
+    var g = engine.encode(raw);
+    if (g.err) { alert('Guess ' + g.err); return; }
+    if (!digits) { alert('Result must be ' + cfg.L + ' codes, e.g. ' + 'bgybb'.slice(0, cfg.L)); return; }
+    var made = engine.makeClue(g.key, digits);
+    floor.clues.push({ key: made.key, ids: made.ids, syms: made.syms, digits: made.digits, pat: made.pat, word: made.word, clue: made.clue, note: validityNote(made.key) });
+    floor.draftGuess = '';
+    floor.draftPat = '';
+    floor.previewDigits = null;
+    if (i === gauntlet.focus) {
+      bdFilterPat = null;
+      if ($('bdFilter')) $('bdFilter').value = '';
+    }
+    refresh();
+    var again = $('gGuess' + i);
+    if (again) again.focus();
+  }
+  function onSolutionInput(i, value) {
+    var floor = gauntlet.floors[i];
+    if (!floor) return;
+    var prev = floor.solution || '';
+    floor.solution = value;
+    var prevPin = pinnedKey(prev);
+    var nextPin = pinnedKey(value);
+    var prevEmpty = !String(prev).trim();
+    var nextEmpty = !String(value).trim();
+    if (prevPin !== nextPin || prevEmpty !== nextEmpty) {
+      refresh();
+      return;
+    }
+    var note = $('gSolNote' + i);
+    if (note) note.textContent = nextEmpty ? '' : ('Enter ' + cfg.L + ' tokens. Later floors update when the solution is complete.');
+  }
+  function fillGauntletList(box) {
+    if (!gauntletView || !box || box.dataset.filled === '1') return;
+    var floor = gauntletView.floors[+box.getAttribute('data-floor')];
+    if (!floor) return;
+    var idxs = box.getAttribute('data-which') === 'theoretical' ? floor.theoretical : floor.known;
+    box.classList.toggle('art', showImages() && idxs.length <= 400);
+    box.innerHTML = listHTML(idxs);
+    box.dataset.filled = '1';
+  }
+  function onGauntletClick(e) {
+    var tile = e.target.closest && e.target.closest('.gauntlet-preview .tile');
+    if (tile) {
+      var host = tile.closest('.gauntlet-preview');
+      if (host) cycleFloorTile(+host.getAttribute('data-floor'), +tile.dataset.i);
+      return;
+    }
+    var focusBtn = e.target.closest && e.target.closest('[data-focus]');
+    if (focusBtn) {
+      gauntlet.focus = +focusBtn.getAttribute('data-focus');
+      syncGauntletMode();
+      refresh();
+      return;
+    }
+    var add = e.target.closest && e.target.closest('[data-add]');
+    if (add) { submitFloor(+add.getAttribute('data-add')); return; }
+    var undo = e.target.closest && e.target.closest('[data-undo]');
+    if (undo) {
+      var u = gauntlet.floors[+undo.getAttribute('data-undo')];
+      if (u) u.clues.pop();
+      refresh();
+      return;
+    }
+    var clearClues = e.target.closest && e.target.closest('[data-clear-clues]');
+    if (clearClues) {
+      var cf = gauntlet.floors[+clearClues.getAttribute('data-clear-clues')];
+      if (cf) cf.clues.splice(0, cf.clues.length);
+      refresh();
+      return;
+    }
+    var clearSol = e.target.closest && e.target.closest('[data-clear-solution]');
+    if (clearSol) {
+      var sf = gauntlet.floors[+clearSol.getAttribute('data-clear-solution')];
+      if (sf) sf.solution = '';
+      refresh();
+      return;
+    }
+    var del = e.target.closest && e.target.closest('[data-del]');
+    if (del) {
+      var card = del.closest('[data-floor]');
+      var df = card && gauntlet.floors[+card.getAttribute('data-floor')];
+      if (df) df.clues.splice(+del.getAttribute('data-del'), 1);
+      refresh();
+      return;
+    }
+    var pick = e.target.closest && e.target.closest('tr[data-pick]');
+    if (pick) {
+      var section = pick.closest('[data-floor]');
+      var pi = section ? +section.getAttribute('data-floor') : -1;
+      var pf = gauntlet.floors[pi];
+      if (!pf) return;
+      pf.draftGuess = pick.getAttribute('data-pick') || '';
+      pf.draftPat = '';
+      pf.previewDigits = new Array(cfg.L).fill(0);
+      var input = $('gGuess' + pi);
+      if (input) { input.value = pf.draftGuess; input.focus(); }
+      keyTarget = input || keyTarget;
+      updateFloorPreview(pi);
+      markKeyTarget();
+    }
+  }
+  function onGauntletInput(e) {
+    var t = e.target;
+    if (!t || !t.getAttribute) return;
+    var kind = t.getAttribute('data-gauntlet-field');
+    if (!kind) return;
+    var i = +t.getAttribute('data-floor');
+    var floor = gauntlet.floors[i];
+    if (!floor) return;
+    if (kind === 'guess') { floor.draftGuess = t.value; updateFloorPreview(i); }
+    else if (kind === 'pat') { floor.draftPat = t.value; updateFloorPreview(i); }
+    else if (kind === 'solution') onSolutionInput(i, t.value);
+  }
+  function onGauntletKey(e) {
+    if (e.key !== 'Enter') return;
+    var t = e.target;
+    if (!t || !t.getAttribute) return;
+    var kind = t.getAttribute('data-gauntlet-field');
+    if (!kind || kind === 'solution') return;
+    var i = +t.getAttribute('data-floor');
+    if (kind === 'guess') {
+      var pat = $('gPat' + i);
+      if (pat && !pat.value) { pat.focus(); e.preventDefault(); return; }
+    }
+    e.preventDefault();
+    submitFloor(i);
+  }
+  function bindGauntletBoard() {
+    var board = $('gauntletBoard');
+    if (!board || board.dataset.bound) return;
+    board.dataset.bound = '1';
+    board.addEventListener('click', onGauntletClick);
+    board.addEventListener('input', onGauntletInput);
+    board.addEventListener('keydown', onGauntletKey);
+    board.addEventListener('toggle', function (ev) {
+      var d = ev.target;
+      if (!d || !d.classList || !d.classList.contains('gauntlet-list') || !d.open) return;
+      var box = d.querySelector('.wordlist');
+      if (box) fillGauntletList(box);
+    }, true);
+    board.addEventListener('focusin', function (ev) {
+      var t = ev.target;
+      if (t && t.getAttribute && t.getAttribute('data-gauntlet-field')) {
+        keyTarget = t;
+        markKeyTarget();
+      }
+    });
+  }
+
   function refresh() {
     if (!engine) return;
-    var parts = engine.replay(clues, cfg.layer);
-    remKnown = parts.known;
-    remTheo = parts.theoretical;
-    remaining = engine.activeRemaining(cfg.layer, parts);
+    syncGauntletMode();
+    var view = null;
+    if (gauntletActive()) {
+      view = buildGauntletView();
+      var focusFloor = view.floors[gauntlet.focus] || view.floors[0];
+      remKnown = focusFloor.known;
+      remTheo = focusFloor.theoretical;
+      remaining = focusFloor.active;
+    } else {
+      var parts = engine.replay(clues, cfg.layer);
+      remKnown = parts.known;
+      remTheo = parts.theoretical;
+      remaining = engine.activeRemaining(cfg.layer, parts);
+    }
+    gauntletView = view;
     if (!cfg.stepsTouched) {
       cfg.steps = Math.max(1, 6 - clues.length);
       if ($('cfgSteps')) $('cfgSteps').value = cfg.steps;
@@ -496,6 +1019,9 @@
     selectedKey = null; autoSel = true;
     $('bdRows').innerHTML = ''; $('bdSummary').textContent = ''; $('bdTitle').textContent = '';
     $('bdGuess').value = ''; delete $('bdRows').dataset.guess;
+    syncGauntletChrome();
+    if (view) renderGauntletBoard(view);
+    else if ($('gauntletBoard')) $('gauntletBoard').innerHTML = '';
     scheduleScore();
     refreshOpeners();
     saveState();
@@ -563,11 +1089,20 @@
     $('packSummary').textContent = summary;
     dropTree();
     cfg.L = engine.pack.length;
-    if (!keepClues) clues = [];
-    else clues = clues.map(function (c) {
-      var g = engine.encode(c.key);
-      return g.err || c.digits.length !== cfg.L ? null : Object.assign(c, { ids: g.ids, syms: g.syms, word: g.word });
-    }).filter(Boolean);
+    ensureGauntletFloors(gauntletFloors());
+    if (!keepClues) {
+      gauntlet.floors.forEach(function (f) {
+        f.clues.splice(0, f.clues.length);
+        f.solution = '';
+        f.draftGuess = '';
+        f.draftPat = '';
+        f.previewDigits = null;
+      });
+      gauntlet.focus = 0;
+      clues = gauntlet.floors[0].clues;
+    } else {
+      gauntlet.floors.forEach(function (f) { reencodeClueList(f.clues); });
+    }
     $('bdGuess').value = ''; selectedKey = null;
     refresh();
     packPhase = 'ready';
@@ -2210,10 +2745,27 @@
     btn.setAttribute('aria-expanded', open ? 'true' : 'false');
     btn.textContent = open ? 'Hide keyboard' : 'Show keyboard';
   }
+  function keyEl() {
+    if (keyTarget && keyTarget.nodeType === 1) {
+      if (document.body.contains(keyTarget)) return keyTarget;
+      keyTarget = 'clueGuess';
+    }
+    return $(keyTarget) || $('clueGuess');
+  }
   function markKeyTarget() {
+    var elTarget = keyTarget && keyTarget.nodeType === 1 ? keyTarget : null;
+    if (elTarget && !document.body.contains(elTarget)) {
+      keyTarget = 'clueGuess';
+      elTarget = null;
+    }
     GUESS_FIELDS.forEach(function (id) {
       var el = $(id);
-      if (el) el.classList.toggle('key-target', id === keyTarget);
+      if (el) el.classList.toggle('key-target', !elTarget && id === keyTarget);
+    });
+    var board = $('gauntletBoard');
+    if (!board) return;
+    Array.prototype.forEach.call(board.querySelectorAll('[data-gauntlet-field]'), function (el) {
+      el.classList.toggle('key-target', el === elTarget);
     });
   }
   function keyPaint() {
@@ -2295,13 +2847,24 @@
     try { el.setSelectionRange(start - 1, start - 1); } catch (e) {}
   }
   function submitKeyTarget() {
+    if (keyTarget && keyTarget.nodeType === 1 && keyTarget.getAttribute('data-gauntlet-field')) {
+      var kind = keyTarget.getAttribute('data-gauntlet-field');
+      var floor = +keyTarget.getAttribute('data-floor');
+      if (kind === 'solution') return;
+      if (kind === 'guess') {
+        var pat = $('gPat' + floor);
+        if (pat && !pat.value) { pat.focus(); return; }
+      }
+      submitFloor(floor);
+      return;
+    }
     if (keyTarget === 'bdGuess') { $('bdBtn').click(); return; }
     if (keyTarget === 'treeOpener') { $('treeBuild').click(); return; }
     if (keyTarget === 'clueGuess' && !$('cluePat').value) { $('cluePat').focus(); return; }
     $('addClueBtn').click();
   }
   function onKeyPress(key) {
-    var el = $(keyTarget) || $('clueGuess');
+    var el = keyEl();
     if (!el) return;
     if (key === 'Enter') { submitKeyTarget(); return; }
     if (key === 'Backspace') {
@@ -3075,6 +3638,7 @@
     renderOpenerPicks();
     renderOpenerTable(openerWords);
     renderTree();
+    if (gauntletView) renderGauntletBoard(gauntletView);
     if ($('bdRows') && $('bdRows').dataset.guess) analyze($('bdRows').dataset.guess, false);
     saveState();
   });
@@ -3195,12 +3759,31 @@
 
   function saveState() {
     try {
+      var floors = gauntlet.floors.map(function (f) {
+        return {
+          clues: f.clues.map(function (c) { return { key: c.key, digits: c.digits }; }),
+          solution: f.solution || ''
+        };
+      });
       localStorage.setItem(LS_STATE, JSON.stringify({
         packId: packId, cfg: cfg,
-        clues: clues.map(function (c) { return { key: c.key, digits: c.digits }; })
+        clues: floors[0] ? floors[0].clues : [],
+        gauntlet: { mode: gauntlet.mode, focus: gauntlet.focus, floors: floors }
       }));
     } catch (e) {}
   }
+  bindGauntletBoard();
+  if ($('gauntletModes')) $('gauntletModes').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-gauntlet]');
+    if (!b || !gauntletSupported()) return;
+    var next = b.getAttribute('data-gauntlet');
+    if (next !== 'normal' && next !== 'gauntlet') return;
+    if (next === gauntlet.mode) return;
+    gauntlet.mode = next;
+    syncGauntletMode();
+    refresh();
+  });
+
   function init() {
     var st = null; try { st = JSON.parse(localStorage.getItem(LS_STATE) || 'null'); } catch (e) {}
     if (st && st.cfg) {
@@ -3221,16 +3804,23 @@
     }
     packId = pid; fillPackSel(); writeCfgToUI();
     loadPack(pid, false).then(function () {
-      if (st && st.clues && st.clues.length && engine) {
-        st.clues.forEach(function (c) {
-          var g = engine.encode(c.key);
-          if (!g.err && c.digits && c.digits.length === cfg.L) {
-            var made = engine.makeClue(g.key, c.digits);
-            clues.push({ key: made.key, ids: made.ids, syms: made.syms, digits: made.digits, pat: made.pat, word: made.word, clue: made.clue, note: validityNote(made.key) });
-          }
+      if (!engine) return;
+      if (st && st.gauntlet && Array.isArray(st.gauntlet.floors) && st.gauntlet.floors.length) {
+        ensureGauntletFloors(Math.max(gauntletFloors(), st.gauntlet.floors.length));
+        st.gauntlet.floors.forEach(function (f, i) {
+          if (!gauntlet.floors[i]) return;
+          restoreClueList(gauntlet.floors[i].clues, f && f.clues);
+          gauntlet.floors[i].solution = f && typeof f.solution === 'string' ? f.solution : '';
         });
-        refresh();
+        if (!gauntlet.floors[0].clues.length && st.clues && st.clues.length) restoreClueList(gauntlet.floors[0].clues, st.clues);
+        gauntlet.focus = st.gauntlet.focus | 0;
+        gauntlet.mode = st.gauntlet.mode === 'gauntlet' ? 'gauntlet' : 'normal';
+      } else if (st && st.clues && st.clues.length) {
+        restoreClueList(gauntlet.floors[0].clues, st.clues);
       }
+      if (gauntlet.focus < 0 || gauntlet.focus >= gauntlet.floors.length) gauntlet.focus = 0;
+      syncGauntletMode();
+      refresh();
     });
   }
   init();

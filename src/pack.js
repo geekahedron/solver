@@ -59,6 +59,18 @@
     return map;
   }
 
+  // Pack-level only. true means three floors. An object may set floors
+  // (integer 2..6). Anything else is ignored here; the checker reports it.
+  function copyGauntlet(value) {
+    var n;
+    if (value == null || value === false) return null;
+    if (value === true) return { floors: 3 };
+    if (!ownObject(value)) return null;
+    n = value.floors == null ? 3 : value.floors;
+    if (!finiteNumber(n) || n < 2 || n > 6 || Math.floor(n) !== n) return null;
+    return { floors: n };
+  }
+
   function copyOpeners(list) {
     if (!list || !list.length) return [];
     var out = [];
@@ -360,6 +372,7 @@
       // A variant array replaces the manifest list. Missing means inherit.
       // Empty means this variant authors none, so the page may generate.
       openers: copyOpeners(variant.openers != null ? variant.openers : manifest.openers),
+      gauntlet: copyGauntlet(manifest.gauntlet),
       appearance: appearanceFrom(manifest.appearance || manifest.images),
       keyboard: copyKeyboard(manifest.keyboard)
     };
@@ -706,6 +719,16 @@
       pushMsg(warnings, 'pools.theoretical', 'alphabet is reserved. The engine does not expand alphabet^length yet.');
     }
 
+    if (manifest.gauntlet != null && manifest.gauntlet !== false) {
+      if (manifest.gauntlet !== true && !ownObject(manifest.gauntlet)) {
+        pushMsg(errors, 'gauntlet', 'gauntlet must be true or an object with floors. It is pack-level, not a mode for every game.');
+      } else if (manifest.gauntlet !== true) {
+        var gFloors = manifest.gauntlet.floors == null ? 3 : manifest.gauntlet.floors;
+        if (!finiteNumber(gFloors) || gFloors < 2 || gFloors > 6 || Math.floor(gFloors) !== gFloors) {
+          pushMsg(errors, 'gauntlet.floors', 'floors must be an integer from 2 to 6.');
+        }
+      }
+    }
     if (manifest.openers != null && !Array.isArray(manifest.openers)) {
       pushMsg(errors, 'openers', 'openers must be an array of guess strings.');
     } else if (Array.isArray(manifest.openers)) {
@@ -763,6 +786,7 @@
         checkList(v.knownSolutions, p + '.knownSolutions', pool !== 'generated');
         if (v.guessList != null) checkList(v.guessList, p + '.guessList', false);
         if (v.openers != null && !Array.isArray(v.openers)) pushMsg(errors, p + '.openers', 'openers must be an array of strings.');
+        if (v.gauntlet != null) pushMsg(warnings, p + '.gauntlet', 'gauntlet is pack-level. Put it next to the pack name; a variant cannot turn it on.');
       });
     }
 
