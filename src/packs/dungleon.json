@@ -20,6 +20,44 @@
   "guessMode": "any",
   "alphabet": "WAMKVBSsDTNOowtFZCcR",
   "pools": { "theoretical": "generated" },
+  "keyboard": {
+    "rows": [
+      ["W", "A", "M", "K", "V"],
+      ["B", "S", "s", "D", "T", "N"],
+      ["O", "o", "w", "t", "F", "Z"],
+      ["C", "c", "R"]
+    ]
+  },
+  "appearance": {
+    "sheet": {
+      "url": "https://www.dungleon.com/images/elements/small/sprites.png?20230203",
+      "cellWidth": 32,
+      "cellHeight": 32,
+      "columns": 21
+    },
+    "entities": {
+      "W": { "label": "Warrior", "image": "https://www.dungleon.com/images/elements/big/wa.png", "sprite": { "index": 17 } },
+      "A": { "label": "Archer", "image": "https://www.dungleon.com/images/elements/big/ar.png", "sprite": { "index": 0 } },
+      "M": { "label": "Mage", "image": "https://www.dungleon.com/images/elements/big/ma.png", "sprite": { "index": 8 } },
+      "K": { "label": "King", "image": "https://www.dungleon.com/images/elements/big/ki.png", "sprite": { "index": 7 } },
+      "V": { "label": "Villager", "image": "https://www.dungleon.com/images/elements/big/vi.png", "sprite": { "index": 16 } },
+      "B": { "label": "Bat", "image": "https://www.dungleon.com/images/elements/big/ba.png", "sprite": { "index": 1 } },
+      "S": { "label": "Skeleton", "image": "https://www.dungleon.com/images/elements/big/sk.png", "sprite": { "index": 11 } },
+      "s": { "label": "Spider", "image": "https://www.dungleon.com/images/elements/big/sp.png", "sprite": { "index": 12 } },
+      "D": { "label": "Dragon", "image": "https://www.dungleon.com/images/elements/big/dr.png", "sprite": { "index": 4 } },
+      "T": { "label": "Troll", "image": "https://www.dungleon.com/images/elements/big/tr.png", "sprite": { "index": 14 } },
+      "N": { "label": "Necromancer", "image": "https://www.dungleon.com/images/elements/big/ne.png", "sprite": { "index": 9 } },
+      "O": { "label": "Orc", "image": "https://www.dungleon.com/images/elements/big/or.png", "sprite": { "index": 10 } },
+      "o": { "label": "Goblin", "image": "https://www.dungleon.com/images/elements/big/go.png", "sprite": { "index": 6 } },
+      "w": { "label": "Wizard", "image": "https://www.dungleon.com/images/elements/big/wi.png", "sprite": { "index": 18 } },
+      "t": { "label": "Thief", "image": "https://www.dungleon.com/images/elements/big/th.png", "sprite": { "index": 13 } },
+      "F": { "label": "Frog", "image": "https://www.dungleon.com/images/elements/big/fr.png", "sprite": { "index": 5 } },
+      "Z": { "label": "Zombie", "image": "https://www.dungleon.com/images/elements/big/zo.png", "sprite": { "index": 19 } },
+      "C": { "label": "Chest", "image": "https://www.dungleon.com/images/elements/big/ch.png", "sprite": { "index": 2 } },
+      "c": { "label": "Coin", "image": "https://www.dungleon.com/images/elements/big/co.png", "sprite": { "index": 3 } },
+      "R": { "label": "Relic", "image": "https://www.dungleon.com/images/elements/big/ty.png", "sprite": { "index": 15 } }
+    }
+  },
   "variants": [
     {
       "id": "dungleon",

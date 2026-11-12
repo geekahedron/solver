@@ -117,7 +117,8 @@ check('Wordle’s first load is the live pack; ENABLE 5-letter stays the fallbac
   const enAt = app.indexOf("id: 'en5'");
   assert.ok(nytAt > 0 && enAt > nytAt);
   assert.ok(app.indexOf("var packId = 'nyt'") !== -1);
-  assert.ok(app.indexOf("? st.packId : 'nyt'") !== -1);
+  assert.ok(app.indexOf("var pid = 'nyt'") !== -1);
+  assert.ok(app.indexOf('!b.blank') !== -1);
   assert.ok(app.indexOf('ENABLE — English 5-letter (reference)') !== -1);
   assert.ok(app.indexOf('Wordle — English 5-letter') === -1);
   assert.ok(app.indexOf("fallbackId: 'en5'") !== -1);
