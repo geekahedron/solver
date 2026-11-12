@@ -18,6 +18,7 @@
   "feedback": "custom",
   "rules": "script:rules/dungleon.js",
   "guessMode": "any",
+  "gauntlet": { "floors": 3 },
   "alphabet": "WAMKVBSsDTNOowtFZCcR",
   "pools": { "theoretical": "generated" },
   "keyboard": {
