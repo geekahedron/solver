@@ -1,0 +1,69 @@
+{
+  "id": "wordle-nyt",
+  "name": "Wordle — NYT WordleBot lists (live)",
+  "note": "Third-party copy of the NYT WordleBot lists, fetched live from the WordGamesBot repo (WordLists/NYT on the default branch). Not an official NYT download. The files are JS const arrays and are parsed as data, never evaluated. Default answers are Answers_with_ED.js; default guesses are Words.js. The menu can switch to Answers.js (regular -ED verbs removed) and Guesses.js (the WordleBot guess subset). Nothing from those lists is committed here.",
+  "delimiter": "none",
+  "caseInsensitive": true,
+  "clueShape": "perSlot",
+  "clueAlphabet": [
+    { "id": "absent", "value": 0, "label": "B", "symbols": ["b", "r", "x", "w", "0", "-", ".", "_"] },
+    { "id": "present", "value": 1, "label": "Y", "symbols": ["y", "p", "o", "1"] },
+    { "id": "correct", "value": 2, "label": "G", "symbols": ["g", "c", "2"] }
+  ],
+  "tokenRenderer": "tiles/letters",
+  "clueRenderer": "clues/wordle-gyb",
+  "feedback": "wordle",
+  "rules": "builtin:wordle",
+  "alphabet": "abcdefghijklmnopqrstuvwxyz",
+  "pools": { "theoretical": "guessList" },
+  "openers": ["slate", "tarps", "crane", "cramp", "trace", "stare", "crate", "raise", "alert", "later"],
+  "remote": {
+    "repo": "https://github.com/WordGamesBot/wordgamesbot.github.io",
+    "timeoutMs": 12000,
+    "answers": [
+      {
+        "id": "with-ed",
+        "label": "WordleBot answers, including -ED",
+        "file": "Answers_with_ED.js",
+        "url": "https://raw.githubusercontent.com/WordGamesBot/wordgamesbot.github.io/HEAD/WordLists/NYT/Answers_with_ED.js",
+        "minCount": 2000,
+        "maxCount": 20000,
+        "default": true
+      },
+      {
+        "id": "no-ed",
+        "label": "WordleBot answers, regular -ED verbs removed",
+        "file": "Answers.js",
+        "url": "https://raw.githubusercontent.com/WordGamesBot/wordgamesbot.github.io/HEAD/WordLists/NYT/Answers.js",
+        "minCount": 2000,
+        "maxCount": 20000
+      }
+    ],
+    "guesses": [
+      {
+        "id": "all",
+        "label": "All valid Wordle guesses",
+        "file": "Words.js",
+        "url": "https://raw.githubusercontent.com/WordGamesBot/wordgamesbot.github.io/HEAD/WordLists/NYT/Words.js",
+        "minCount": 10000,
+        "maxCount": 80000,
+        "default": true
+      },
+      {
+        "id": "bot",
+        "label": "WordleBot guess list",
+        "file": "Guesses.js",
+        "url": "https://raw.githubusercontent.com/WordGamesBot/wordgamesbot.github.io/HEAD/WordLists/NYT/Guesses.js",
+        "minCount": 3000,
+        "maxCount": 20000
+      }
+    ]
+  },
+  "variants": [
+    {
+      "id": "wordle-nyt",
+      "name": "Wordle — NYT WordleBot lists (live)",
+      "length": 5
+    }
+  ]
+}

@@ -10,11 +10,12 @@
   var LS_KEY = 'geek-solver-packs-v1', LS_STATE = 'geek-solver-state-v1';
 
   var BUILTIN = [
-    { id: 'en5', name: 'Wordle — English 5-letter (built-in)', variant: 'wordle-en-5' },
-    { id: 'en4', name: 'English 4-letter (built-in)', variant: 'wordle-en-4' },
-    { id: 'en6', name: 'English 6-letter (built-in)', variant: 'wordle-en-6' },
-    { id: 'en7', name: 'English 7-letter (built-in)', variant: 'wordle-en-7' },
-    { id: 'en8', name: 'English 8-letter (built-in)', variant: 'wordle-en-8' },
+    { id: 'nyt', name: 'Wordle — NYT WordleBot lists (live)', manifest: 'packs/wordle-nyt.json', variant: 'wordle-nyt', remote: true },
+    { id: 'en5', name: 'ENABLE — English 5-letter (reference)', variant: 'wordle-en-5' },
+    { id: 'en4', name: 'ENABLE — English 4-letter', variant: 'wordle-en-4' },
+    { id: 'en6', name: 'ENABLE — English 6-letter', variant: 'wordle-en-6' },
+    { id: 'en7', name: 'ENABLE — English 7-letter', variant: 'wordle-en-7' },
+    { id: 'en8', name: 'ENABLE — English 8-letter', variant: 'wordle-en-8' },
     { id: 'dungleon', name: 'Dungleon', manifest: 'packs/dungleon.json', variant: 'dungleon' },
     { id: 'blank', name: 'Custom — paste / upload your own lists', blank: true },
     { id: 'digits', name: 'Custom digits (0-9) — paste your list', blank: true, preset: { L: 5, alpha: '0123456789' } },
@@ -24,8 +25,18 @@
   var cfg = { L: 5, alpha: 'abcdefghijklmnopqrstuvwxyz', ci: true, tok: false, rule: 'wordle', valid: 'both',
     mode: 'avg', hard: 'off', ansOnly: false, max: 12000, top: 15, notation: 'GYB',
     layer: 'known', guessMode: 'dictionary', page: 'both',
-    guarantee: false, steps: 6, stepsTouched: false, treePolicy: 'worst' };
-  var packId = 'en5';
+    guarantee: false, steps: 6, stepsTouched: false, treePolicy: 'worst',
+    nytAnswers: 'with-ed', nytGuesses: 'all' };
+  var packId = 'nyt';
+  var readyPackId = null;
+  var keepPackWarn = false;
+  var packWarn = '';
+  var nytWant = { answers: 'with-ed', guesses: 'all' };
+  var nytLoaded = null;
+  var nytCache = Object.create(null);
+  var nytServerPayload = null;
+  var nytCheckNow = false;
+  var nytFilling = false;
   var packGuessDefault = null;
   var engine = null;
   var packPhase = 'idle';
@@ -454,6 +465,7 @@
     sel.innerHTML = BUILTIN.map(function (p) { return '<option value="' + p.id + '">' + esc(p.name) + '</option>'; }).join('') +
       Object.keys(sp).map(function (k) { return '<option value="saved:' + esc(k) + '">★ ' + esc(k) + '</option>'; }).join('');
     sel.value = packId;
+    syncNytPanel();
   }
   function readCfgFromUI() {
     cfg.L = Math.max(1, Math.min(20, parseInt($('cfgL').value, 10) || 5));
@@ -473,21 +485,31 @@
     applyPage(cfg.page || 'both', true);
   }
   function reportPack(keepClues) {
+    if (keepPackWarn) keepPackWarn = false;
+    else setPackWarn('');
     var extraGuesses = 0, fi;
     for (fi = 0; fi < engine.flags.length; fi++) if (engine.flags[fi].guess && !engine.flags[fi].known) extraGuesses++;
-    var msg = engine.nKnown.toLocaleString() + ' answers, ' + extraGuesses.toLocaleString() + ' extra guesses';
-    if (engine.pack.lists && engine.pack.lists.theoretical === 'generated') {
-      msg += ' · ' + engine.theoreticalIdx.length.toLocaleString() + ' theoretical';
+    var msg;
+    if (engine.pack.listSource) {
+      msg = remoteStatus(engine);
+      if (engine.rej) msg += ' · ' + engine.rej + ' entries skipped (wrong length/alphabet)';
+    } else {
+      msg = engine.nKnown.toLocaleString() + ' answers, ' + extraGuesses.toLocaleString() + ' extra guesses';
+      if (engine.pack.lists && engine.pack.lists.theoretical === 'generated') {
+        msg += ' · ' + engine.theoreticalIdx.length.toLocaleString() + ' theoretical';
+      }
+      if (engine.ruleDrift && engine.ruleDrift.length) {
+        msg += ' · ' + engine.ruleDrift.length + ' known answers outside the generated rules (' +
+          engine.ruleDrift.slice(0, 8).join(', ') + (engine.ruleDrift.length > 8 ? ', …' : '') + ')';
+      }
+      if (engine.rej) msg += ' · ' + engine.rej + ' entries skipped (wrong length/alphabet)';
+      if (engine.dup) msg += ' · ' + engine.dup + ' duplicates merged';
     }
-    if (engine.ruleDrift && engine.ruleDrift.length) {
-      msg += ' · ' + engine.ruleDrift.length + ' known answers outside the generated rules (' +
-        engine.ruleDrift.slice(0, 8).join(', ') + (engine.ruleDrift.length > 8 ? ', …' : '') + ')';
-    }
-    if (engine.rej) msg += ' · ' + engine.rej + ' entries skipped (wrong length/alphabet)';
-    if (engine.dup) msg += ' · ' + engine.dup + ' duplicates merged';
     document.body.classList.toggle('case-sensitive', !!(engine.pack && engine.pack.caseInsensitive === false));
     $('packMsg').textContent = msg;
-    $('packSummary').textContent = ($('packSel').selectedOptions[0] || {}).textContent + ' · ' + engine.nKnown.toLocaleString() + ' answers';
+    var summary = ($('packSel').selectedOptions[0] || {}).textContent + ' · ' + engine.nKnown.toLocaleString() + ' answers';
+    if (engine.pack.listSource) summary += ' · ' + engine.guessIdx.length.toLocaleString() + ' guesses';
+    $('packSummary').textContent = summary;
     dropTree();
     cfg.L = engine.pack.length;
     if (!keepClues) clues = [];
@@ -499,6 +521,8 @@
     refresh();
     packPhase = 'ready';
     packError = '';
+    readyPackId = packId;
+    renderNytCounts();
     scheduleTreeFlush();
   }
   function mountCustom(keepClues) {
@@ -545,12 +569,357 @@
     else if (mode === 'answersOnly') { cfg.valid = 'both'; cfg.hard = 'off'; cfg.ansOnly = true; }
     else { cfg.valid = 'both'; cfg.hard = 'off'; cfg.ansOnly = false; cfg.guessMode = 'dictionary'; }
   }
+  function setPackWarn(text) {
+    packWarn = text || '';
+    var el = $('packWarn');
+    if (!el) return;
+    el.hidden = !packWarn;
+    el.textContent = packWarn;
+    if (packWarn && $('setupCard')) $('setupCard').open = true;
+  }
+  function syncNytPanel() {
+    var el = $('nytSources');
+    if (el) el.hidden = packId !== 'nyt';
+    if (packId !== 'nyt') renderNytCounts();
+  }
+  function formatChecked(unix) {
+    var d = new Date((unix || 0) * 1000);
+    if (!unix || isNaN(d.getTime())) return '';
+    return d.toLocaleString();
+  }
+  function renderNytCounts() {
+    var el = $('nytCounts');
+    if (!el) return;
+    var src = engine && engine.pack && engine.pack.listSource;
+    if (!src || packId !== 'nyt') { el.textContent = ''; return; }
+    var when = src.lastChecked ? (' Last checked ' + formatChecked(src.lastChecked) + '.') : '';
+    el.textContent = 'Loaded ' + src.answerCount.toLocaleString() + ' answers from ' + src.answers.file +
+      ' and ' + src.guessCount.toLocaleString() + ' guesses from ' + src.guesses.file + '. ' +
+      (src.originNote || '') + when;
+  }
+  function remoteStatus(eng) {
+    var src = eng.pack.listSource;
+    var where = 'Saved on this host';
+    if (src.origin === 'github-direct') where = 'Direct from WordGamesBot';
+    else if (src.stale) where = 'Last good copy on this host';
+    else if (src.origin === 'github') where = 'Fetched by this host';
+    return where + ' · ' + src.answers.label + ': ' + eng.nKnown.toLocaleString() +
+      ' answers · ' + src.guesses.label + ': ' + eng.guessIdx.length.toLocaleString() + ' valid guesses';
+  }
+  function packLabel(id) {
+    var i;
+    if (!id) return 'the ENABLE 5-letter pack';
+    if (id.indexOf('saved:') === 0) return 'the saved pack ' + id.slice(6);
+    for (i = 0; i < BUILTIN.length; i++) if (BUILTIN[i].id === id) return BUILTIN[i].name;
+    return 'the previous pack';
+  }
+  function remoteErrorText(err) {
+    var msg = (err && err.message) ? err.message : String(err || 'the lists could not be fetched');
+    if (msg === 'Failed to fetch' || msg === 'Load failed' || msg === 'NetworkError when attempting to fetch resource.') {
+      return 'the browser could not reach GitHub (' + msg + ')';
+    }
+    return msg;
+  }
+  function pickRemote(list, id) {
+    var i, fallback = null;
+    if (!list || !list.length) throw new Error('Pack is missing a word list');
+    for (i = 0; i < list.length; i++) if (list[i].default) fallback = list[i];
+    if (!fallback) fallback = list[0];
+    for (i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+    return fallback;
+  }
+  function fillNytSelects(manifest) {
+    if (!$('nytAnswers') || !manifest || !manifest.remote) return;
+    nytFilling = true;
+    function fill(sel, list, chosen) {
+      sel.innerHTML = list.map(function (item) {
+        return '<option value="' + esc(item.id) + '">' + esc(item.label) + '</option>';
+      }).join('');
+      sel.value = chosen;
+    }
+    fill($('nytAnswers'), manifest.remote.answers, nytWant.answers);
+    fill($('nytGuesses'), manifest.remote.guesses, nytWant.guesses);
+    nytFilling = false;
+  }
+  function fetchRemoteText(url, timeoutMs) {
+    var ms = timeoutMs || 12000;
+    var ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+    var opts = { cache: 'no-cache' };
+    if (ctrl) opts.signal = ctrl.signal;
+    return new Promise(function (resolve, reject) {
+      var settled = false;
+      var timer = null;
+      function cleanup() { if (timer) clearTimeout(timer); }
+      function ok(v) { if (settled) return; settled = true; cleanup(); resolve(v); }
+      function bad(e) { if (settled) return; settled = true; cleanup(); reject(e); }
+      timer = setTimeout(function () {
+        if (ctrl) ctrl.abort();
+        else bad(new Error('timed out after ' + Math.round(ms / 1000) + 's'));
+      }, ms);
+      fetch(url, opts).then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.text();
+      }).then(ok).catch(function (e) {
+        if (e && e.name === 'AbortError') bad(new Error('timed out after ' + Math.round(ms / 1000) + 's'));
+        else bad(e);
+      });
+    });
+  }
+  function fetchRemoteList(spec, length, timeoutMs, skipMemory) {
+    var cached = nytCache[spec.url];
+    if (!skipMemory && cached) return Promise.resolve(cached);
+    return fetchRemoteText(spec.url, timeoutMs).then(function (text) {
+      var parsed = window.SolverListParse.parseConstArray(text, {
+        length: length,
+        minCount: spec.minCount,
+        maxCount: spec.maxCount,
+        caseInsensitive: true
+      });
+      if (!parsed.ok) throw new Error(spec.file + ': ' + parsed.error);
+      var rec = { words: parsed.words, count: parsed.count, url: spec.url };
+      nytCache[spec.url] = rec;
+      return rec;
+    }).catch(function (e) {
+      var msg = (e && e.message) ? e.message : 'could not be fetched';
+      if (msg.indexOf(spec.file) === 0) throw e;
+      throw new Error(spec.file + ': ' + msg);
+    });
+  }
+  function mountFetchedPack(pack, manifest, variant, builtin, answersText, guessesText, rules, keepClues, applyDefaults) {
+    cfg.L = pack.length; cfg.tok = pack.delimiter !== 'none'; cfg.ci = pack.caseInsensitive;
+    cfg.alpha = typeof manifest.alphabet === 'string' ? manifest.alphabet : cfg.alpha;
+    cfg.rule = pack.feedback === 'simple' ? 'simple' : 'wordle';
+    applyDeclaredGuessMode((variant && variant.guessMode) || manifest.guessMode || (builtin && builtin.guessMode) || null, applyDefaults);
+    writeCfgToUI();
+    $('ansText').value = String(answersText || '').trim();
+    $('guessText').value = String(guessesText || '').trim();
+    pack.rulesImpl = rules;
+    engine = window.SolverEngine.create(pack, { answers: answersText || '', guesses: guessesText || '' });
+    reportPack(keepClues);
+  }
+  function failRemotePack(err, previousReady) {
+    var why = remoteErrorText(err);
+    var Parse = window.SolverListParse;
+    var plan = (Parse && Parse.choosePackFallback) ? Parse.choosePackFallback({
+      haveReady: !!(engine && previousReady),
+      previousId: previousReady,
+      requestedId: 'nyt',
+      fallbackId: 'en5'
+    }) : ((engine && previousReady) ? { action: 'keep', packId: previousReady } : { action: 'load', packId: 'en5' });
+    packError = why;
+    failQueuedPack();
+    packError = '';
+    if (plan.action === 'keep') {
+      var stayedLive = plan.packId === 'nyt' && engine && engine.pack && engine.pack.listSource;
+      if (stayedLive && nytLoaded) {
+        nytWant.answers = nytLoaded.answers;
+        nytWant.guesses = nytLoaded.guesses;
+        cfg.nytAnswers = nytLoaded.answers;
+        cfg.nytGuesses = nytLoaded.guesses;
+        if ($('nytAnswers')) $('nytAnswers').value = nytLoaded.answers;
+        if ($('nytGuesses')) $('nytGuesses').value = nytLoaded.guesses;
+        var src = engine.pack.listSource;
+        setPackWarn('Could not switch WordleBot lists (' + why + '). Still using ' +
+          src.answers.label + ' (' + engine.nKnown.toLocaleString() + ' answers) and ' +
+          src.guesses.label + ' (' + engine.guessIdx.length.toLocaleString() + ' guesses).');
+        $('packMsg').textContent = remoteStatus(engine);
+      } else {
+        packId = plan.packId;
+        fillPackSel();
+        setPackWarn('Could not load the WordleBot lists (' + why + '). Staying on ' + packLabel(plan.packId) + '.');
+        $('packMsg').textContent = 'WordleBot lists did not load. This pack is unchanged.';
+      }
+      packPhase = 'ready';
+      scheduleScore();
+      saveState();
+      return Promise.resolve();
+    }
+    setPackWarn('Could not load the WordleBot lists (' + why + '). Showing ' + packLabel(plan.packId) + ' instead.');
+    keepPackWarn = true;
+    packId = plan.packId;
+    fillPackSel();
+    return loadPack(plan.packId, false);
+  }
+  function markAbsent(err) {
+    if (err && err.endpointAbsent) return err;
+    var absent = new Error('endpoint-absent');
+    absent.endpointAbsent = true;
+    return absent;
+  }
+  function fetchServerLists(asked) {
+    var url = 'api/wordlebot.php' + (asked ? '?refresh=1' : '');
+    return fetchRemoteText(url, 60000).then(function (text) {
+      var trimmed = String(text || '').replace(/^\uFEFF/, '').trim();
+      var data = null;
+      if (trimmed.charAt(0) === '{') {
+        try { data = JSON.parse(trimmed); } catch (e) { data = null; }
+      }
+      if (!data || typeof data !== 'object') throw markAbsent();
+      return data;
+    }).catch(function (err) {
+      if (err && err.endpointAbsent) throw err;
+      var msg = err && err.message ? err.message : '';
+      if (msg === 'HTTP 404' || msg === 'HTTP 405' || msg === 'Failed to fetch' || msg === 'Load failed' || (err && err.name === 'TypeError')) {
+        throw markAbsent();
+      }
+      throw err;
+    });
+  }
+  function validServerList(entry, spec) {
+    var words, i, w, min, max;
+    if (!entry || !entry.words || !entry.words.length) return false;
+    words = entry.words;
+    min = spec.minCount || 1;
+    max = spec.maxCount || 0;
+    if (words.length < min) return false;
+    if (max && words.length > max) return false;
+    for (i = 0; i < words.length; i++) {
+      w = words[i];
+      if (typeof w !== 'string' || !/^[a-z]{5}$/.test(w)) return false;
+    }
+    return true;
+  }
+  function originNote(meta) {
+    if (!meta) return '';
+    if (meta.origin === 'github-direct') {
+      if (meta.refresh === 'not-due') return 'Loaded directly from WordGamesBot. This preview has no host cache, so Check now does not fetch again.';
+      return 'Loaded directly from WordGamesBot because this host has no solver cache.';
+    }
+    if (meta.stale || meta.refresh === 'failed' || meta.refresh === 'cooldown') {
+      return 'This host is serving its last good copy. The latest check did not reach WordGamesBot.' +
+        (meta.error ? (' ' + meta.error + '.') : '');
+    }
+    if (meta.origin === 'github' || meta.refresh === 'fetched') return 'This host fetched the lists from WordGamesBot.';
+    if (meta.refresh === 'not-due') return 'This host’s saved copy is under 24 hours old, so WordGamesBot was not contacted.';
+    return 'This host’s saved copy.';
+  }
+  function listsFromServer(data, ans, gue) {
+    var a, g;
+    if (!data || data.ok === false || !data.lists) {
+      throw new Error((data && data.error) ? data.error : 'solver cache has no lists');
+    }
+    a = data.lists[ans.id];
+    g = data.lists[gue.id];
+    if (!validServerList(a, ans) || !validServerList(g, gue)) throw new Error('solver cache failed the list check');
+    return {
+      answers: { words: a.words, count: a.words.length },
+      guesses: { words: g.words, count: g.words.length },
+      meta: data
+    };
+  }
+  function payloadCovers(data, ans, gue) {
+    return !!(data && data.ok !== false && data.lists &&
+      validServerList(data.lists[ans.id], ans) && validServerList(data.lists[gue.id], gue));
+  }
+  function loadWordlebotPair(ans, gue, length, timeoutMs, asked) {
+    var directHeld = nytServerPayload && nytServerPayload.origin === 'github-direct' && payloadCovers(nytServerPayload, ans, gue);
+    if (directHeld) {
+      var held = asked ? Object.assign({}, nytServerPayload, { refresh: 'not-due' }) : nytServerPayload;
+      return Promise.resolve(listsFromServer(held, ans, gue));
+    }
+    if (!asked && payloadCovers(nytServerPayload, ans, gue)) {
+      return Promise.resolve(listsFromServer(nytServerPayload, ans, gue));
+    }
+    return fetchServerLists(asked).then(function (data) {
+      var pair = listsFromServer(data, ans, gue);
+      nytServerPayload = data;
+      return pair;
+    }).catch(function (err) {
+      if (!err || !err.endpointAbsent) throw err;
+      return Promise.all([
+        fetchRemoteList(ans, length, timeoutMs, asked),
+        fetchRemoteList(gue, length, timeoutMs, asked)
+      ]).then(function (parts) {
+        var meta = (nytServerPayload && nytServerPayload.origin === 'github-direct') ? nytServerPayload : {
+          ok: true,
+          origin: 'github-direct',
+          stale: false,
+          error: null,
+          lists: {}
+        };
+        meta.refresh = 'fetched';
+        meta.lastChecked = Math.floor(Date.now() / 1000);
+        meta.error = null;
+        meta.stale = false;
+        meta.lists[ans.id] = { words: parts[0].words, count: parts[0].count };
+        meta.lists[gue.id] = { words: parts[1].words, count: parts[1].count };
+        nytServerPayload = meta;
+        return { answers: parts[0], guesses: parts[1], meta: meta };
+      });
+    });
+  }
+  function fetchAndMountNyt(gen, keepClues, applyDefaults, builtin) {
+    function current() { return gen === packGen; }
+    if (!window.SolverListParse) return Promise.reject(new Error('Word list parser failed to load'));
+    return fetchManifest(builtin.manifest).then(function (manifest) {
+      if (!current()) return;
+      if (!manifest.remote || !manifest.remote.answers || !manifest.remote.guesses) {
+        throw new Error('Pack has no remote lists');
+      }
+      var variant = null;
+      (manifest.variants || []).forEach(function (v) { if (v.id === builtin.variant) variant = v; });
+      if (!variant) throw new Error('missing variant ' + builtin.variant);
+      var pack = Pack.normalize(manifest, variant);
+      var ans = pickRemote(manifest.remote.answers, nytWant.answers || cfg.nytAnswers);
+      var gue = pickRemote(manifest.remote.guesses, nytWant.guesses || cfg.nytGuesses);
+      nytWant.answers = ans.id;
+      nytWant.guesses = gue.id;
+      cfg.nytAnswers = ans.id;
+      cfg.nytGuesses = gue.id;
+      fillNytSelects(manifest);
+      var timeoutMs = manifest.remote.timeoutMs || 12000;
+      var asked = nytCheckNow;
+      nytCheckNow = false;
+      return Promise.all([
+        loadWordlebotPair(ans, gue, pack.length, timeoutMs, asked),
+        Pack.loadRules(pack, function (rel) {
+          return fetch('packs/' + rel).then(function (r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.text();
+          });
+        })
+      ]).then(function (parts) {
+        if (!current()) return;
+        var pair = parts[0];
+        var meta = pair.meta || {};
+        pack.listSource = {
+          repo: manifest.remote.repo,
+          answers: ans,
+          guesses: gue,
+          answerCount: pair.answers.count,
+          guessCount: pair.guesses.count,
+          origin: meta.origin || '',
+          stale: !!meta.stale,
+          refresh: meta.refresh || '',
+          lastChecked: meta.lastChecked || null,
+          error: meta.error || '',
+          originNote: originNote(meta)
+        };
+        nytLoaded = { answers: ans.id, guesses: gue.id };
+        mountFetchedPack(pack, manifest, variant, builtin, pair.answers.words.join('\n'), pair.guesses.words.join('\n'), parts[1], keepClues, applyDefaults);
+      });
+    });
+  }
+  function onNytChoice() {
+    if (nytFilling || packId !== 'nyt') return;
+    var answers = $('nytAnswers').value || nytWant.answers;
+    var guesses = $('nytGuesses').value || nytWant.guesses;
+    var src = engine && engine.pack && engine.pack.listSource;
+    if (src && src.answers.id === answers && src.guesses.id === guesses) return;
+    nytWant.answers = answers;
+    nytWant.guesses = guesses;
+    cfg.nytAnswers = answers;
+    cfg.nytGuesses = guesses;
+    loadPack('nyt', true, false);
+  }
   function loadPack(id, keepClues, applyDefaults) {
     var gen = ++packGen;
+    var previousReady = readyPackId;
     treeFlushToken++;
     cancelScore();
     packPhase = 'loading';
     packId = id;
+    syncNytPanel();
     function current() { return gen === packGen; }
     if (id.indexOf('saved:') === 0) {
       var p = savedPacks()[id.slice(6)];
@@ -566,12 +935,20 @@
       $('ansText').value = p.answers || ''; $('guessText').value = p.guesses || '';
       mountCustom(keepClues); return Promise.resolve();
     }
-    var b = BUILTIN.filter(function (x) { return x.id === id; })[0] || BUILTIN[0];
+    var b = BUILTIN.filter(function (x) { return x.id === id; })[0];
+    if (!b) b = BUILTIN.filter(function (x) { return x.id === 'en5'; })[0] || BUILTIN[0];
     if (b.blank) {
       cfg.tok = false; cfg.ci = true; cfg.alpha = 'abcdefghijklmnopqrstuvwxyz';
       if (b.preset) Object.assign(cfg, b.preset);
       writeCfgToUI(); $('ansText').value = ''; $('guessText').value = '';
       $('setupCard').open = true; mountCustom(false); return Promise.resolve();
+    }
+    if (b.remote) {
+      $('packMsg').textContent = 'Loading WordleBot lists…';
+      return fetchAndMountNyt(gen, !!keepClues, !!applyDefaults, b).catch(function (e) {
+        if (!current()) return;
+        return failRemotePack(e, previousReady);
+      });
     }
     $('packMsg').textContent = 'Loading…';
     return fetchManifest(b.manifest || 'packs/wordle-en.json').then(function (manifest) {
@@ -589,18 +966,11 @@
         Pack.loadRules(pack, fetchPack)
       ]).then(function (t) {
         if (!current()) return;
-        cfg.L = pack.length; cfg.tok = pack.delimiter !== 'none'; cfg.ci = pack.caseInsensitive;
-        cfg.alpha = typeof manifest.alphabet === 'string' ? manifest.alphabet : cfg.alpha;
-        cfg.rule = pack.feedback === 'simple' ? 'simple' : 'wordle';
-        applyDeclaredGuessMode(variant.guessMode || manifest.guessMode || b.guessMode || null, applyDefaults);
-        writeCfgToUI();
-        $('ansText').value = t[0].trim(); $('guessText').value = (t[1] || '').trim();
-        pack.rulesImpl = t[2];
-        engine = window.SolverEngine.create(pack, { answers: t[0], guesses: t[1] || '' });
-        reportPack(keepClues);
+        mountFetchedPack(pack, manifest, variant, b, t[0], t[1] || '', t[2], keepClues, applyDefaults);
       });
     }).catch(function (e) {
       if (!current()) return;
+      keepPackWarn = false;
       packPhase = 'failed';
       packError = (e && e.message) ? e.message : String(e || 'load failed');
       $('packMsg').textContent = 'Could not load built-in pack (' + packError + '). Paste or upload lists instead.';
@@ -609,6 +979,13 @@
     });
   }
   $('packSel').addEventListener('change', function () { loadPack($('packSel').value, false, true); });
+  if ($('nytAnswers')) $('nytAnswers').addEventListener('change', onNytChoice);
+  if ($('nytGuesses')) $('nytGuesses').addEventListener('change', onNytChoice);
+  if ($('nytCheck')) $('nytCheck').addEventListener('click', function () {
+    if (packId !== 'nyt') return;
+    nytCheckNow = true;
+    loadPack('nyt', true, false);
+  });
   $('applyBtn').addEventListener('click', function () { mountCustom(true); });
   $('savePackBtn').addEventListener('click', function () {
     var name = prompt('Name for this pack (saved in this browser only):', ''); if (!name) return;
@@ -621,7 +998,7 @@
   $('delPackBtn').addEventListener('click', function () {
     if (packId.indexOf('saved:') !== 0) { alert('Select a saved (★) pack first.'); return; }
     var sp = savedPacks(); delete sp[packId.slice(6)]; localStorage.setItem(LS_KEY, JSON.stringify(sp));
-    packId = 'en5'; fillPackSel(); loadPack('en5', false);
+    packId = 'nyt'; fillPackSel(); loadPack('nyt', false);
   });
   function wireFile(inputId, areaId) {
     $(inputId).addEventListener('change', function () {
@@ -1702,12 +2079,16 @@
   function init() {
     var st = null; try { st = JSON.parse(localStorage.getItem(LS_STATE) || 'null'); } catch (e) {}
     if (st && st.cfg) {
-        ['mode', 'hard', 'ansOnly', 'max', 'top', 'notation', 'valid', 'layer', 'guessMode', 'page', 'guarantee', 'steps', 'stepsTouched', 'treePolicy'].forEach(function (k) {
+        ['mode', 'hard', 'ansOnly', 'max', 'top', 'notation', 'valid', 'layer', 'guessMode', 'page', 'guarantee', 'steps', 'stepsTouched', 'treePolicy', 'nytAnswers', 'nytGuesses'].forEach(function (k) {
         if (st.cfg[k] !== undefined) cfg[k] = st.cfg[k];
       });
       if (!st.cfg.guessMode) cfg.guessMode = inferGuessMode();
     }
-    var pid = st && st.packId && (st.packId.indexOf('saved:') === 0 ? savedPacks()[st.packId.slice(6)] : BUILTIN.some(function (b) { return b.id === st.packId && !b.blank; })) ? st.packId : 'en5';
+    nytWant.answers = cfg.nytAnswers || 'with-ed';
+    nytWant.guesses = cfg.nytGuesses || 'all';
+    if ($('nytAnswers')) $('nytAnswers').value = nytWant.answers;
+    if ($('nytGuesses')) $('nytGuesses').value = nytWant.guesses;
+    var pid = st && st.packId && (st.packId.indexOf('saved:') === 0 ? savedPacks()[st.packId.slice(6)] : BUILTIN.some(function (b) { return b.id === st.packId && !b.blank; })) ? st.packId : 'nyt';
     packId = pid; fillPackSel(); writeCfgToUI();
     loadPack(pid, false).then(function () {
       if (st && st.clues && st.clues.length && engine) {

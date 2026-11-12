@@ -34,6 +34,28 @@
         <button type="button" id="delPackBtn" class="ghost">Delete saved pack</button>
       </div>
     </div>
+    <div id="nytSources" hidden>
+      <div class="grid2">
+        <label>Answer list
+          <select id="nytAnswers">
+            <option value="with-ed" selected>WordleBot answers, including -ED</option>
+            <option value="no-ed">WordleBot answers, regular -ED verbs removed</option>
+          </select>
+        </label>
+        <label>Valid guesses
+          <select id="nytGuesses">
+            <option value="all" selected>All valid Wordle guesses</option>
+            <option value="bot">WordleBot guess list</option>
+          </select>
+        </label>
+      </div>
+      <p class="muted small" id="nytAbout">Wordle’s default lists. A third-party copy of the NYT WordleBot lists from <a href="https://github.com/WordGamesBot/wordgamesbot.github.io">WordGamesBot</a> (<code>WordLists/NYT/*.js</code>). Not an official NYT download. This site keeps a copy and asks WordGamesBot at most once every 24 hours. If WordGamesBot cannot be reached, the last good copy stays in use. A preview without that cache loads the files directly. If neither works, the ENABLE 5-letter reference pack is shown. The word lists are not saved in this browser. Opening Analysis still stops at “Max guesses to score” (default 12,000). Opener bits score the ten quick picks.</p>
+      <p class="muted small" id="nytCounts" role="status"></p>
+      <div class="row-btns">
+        <button type="button" id="nytCheck" class="ghost">Check now</button>
+        <span class="muted small">Asks this host to refresh. A copy under 24 hours old is kept.</span>
+      </div>
+    </div>
     <div class="grid3">
       <label>Word length <input type="number" id="cfgL" min="1" max="20" value="5"></label>
       <label>Alphabet <small>(blank = any)</small> <input type="text" id="cfgAlpha" value="abcdefghijklmnopqrstuvwxyz" spellcheck="false"></label>
@@ -67,8 +89,9 @@
       <button type="button" id="applyBtn">Apply setup</button>
       <span id="packMsg" class="muted"></span>
     </div>
-    <p class="muted small">Built-in English presets are one pack (<code>packs/wordle-en.json</code>): a known answer list, a larger guess list, and Wordle feedback. Guess mode and the solution layer sit on that same pack.</p>
+    <p class="muted small">Wordle opens on the NYT WordleBot lists from this host’s cache. ENABLE presets (<code>packs/wordle-en.json</code>, 4–8 letters, including a 5-letter reference list) stay in the menu for other word games. Guess mode and the solution layer sit on the loaded pack. Apply setup uses the text in the boxes; choosing a WordleBot list above uses the cached copy.</p>
   </details>
+  <p id="packWarn" class="warn small" hidden role="status"></p>
 
   <!-- CLUES -->
   <section class="card">
@@ -153,7 +176,7 @@
       </table>
     </div>
     <p class="muted small">Tap a row to see its full breakdown below. Guess mode is any, dictionary, hard, or answers-only. Wordle hard (the menu above) only forces reused greens and yellows; the guarantee applies that rule on every later guess, not only the next one. The solution layer chooses which remaining list the scorer partitions. Steps is the average number of guesses. Max steps is the multi-ply worst case. Worst is only the biggest one-ply group.</p>
-    <p class="muted small" id="stepsHelp">Steps is the expected number of guesses to finish, with each remaining answer equally likely (no frequency weights). The guess you are scoring counts as 1; an all-green reply adds nothing further. Later guesses follow the active guess mode and hard-mode rules. Sets of 2–3 answers use a closed form. Exact through 5 answers (at most 64 guesses tried at one of those nodes). A dictionary larger than 280 is cut to that many probes for the whole search, and the answers still in the set are always added back. Every guess in the pool is valued when at most 40 answers remain and the pool has at most 20000 rows; above that, deepen a beam of 18 expected-remaining, 6 entropy, and 6 worst-case guesses. Larger sets continue with the top 1 one-ply pick from 40 candidates. A trailing ≈ used one of those cuts. Guesses outside the beam show –. These lists are not the NYT Wordle lists, so the number will not match Wordlebot. “Max guesses to score” still limits which openers are deepened.</p>
+    <p class="muted small" id="stepsHelp">Steps is the expected number of guesses to finish, with each remaining answer equally likely (no frequency weights). The guess you are scoring counts as 1; an all-green reply adds nothing further. Later guesses follow the active guess mode and hard-mode rules. Sets of 2–3 answers use a closed form. Exact through 5 answers (at most 64 guesses tried at one of those nodes). A dictionary larger than 280 is cut to that many probes for the whole search, and the answers still in the set are always added back. Every guess in the pool is valued when at most 40 answers remain and the pool has at most 20000 rows; above that, deepen a beam of 18 expected-remaining, 6 entropy, and 6 worst-case guesses. Larger sets continue with the top 1 one-ply pick from 40 candidates. A trailing ≈ used one of those cuts. Guesses outside the beam show –. The built-in English lists are not the NYT Wordle lists. The live WordleBot pack uses WordGamesBot’s public copy of those lists and the same caps, and every remaining answer is still equally likely, so neither opening matches Wordlebot’s published average. “Max guesses to score” still limits which openers are deepened.</p>
   </section>
 
   <!-- BREAKDOWN -->
@@ -171,7 +194,7 @@
 
   <section class="card" id="treeCard">
     <h2>Opener solve tree</h2>
-    <p class="muted small">Pick a starting guess and expand its decision tree on the answers still possible. After the opener, each result shows the next guess and the words that remain — the same shape as <a href="https://jonathanolson.net/wordle-solver/">Jonathan Olson’s solver</a>. This tree is built in the browser for the list you have loaded. It is not his precomputed NYT Wordle tree: the built-in packs are ENABLE subsets (SALET and SOARE are not in them; TARPS is on the guess list), every answer is equally likely, and a long hard-mode list is too big for an exhaustive proof. The guarantee checkbox is unchanged and still fail-closed. Here one concrete strategy is played instead. Later guesses use the active guess mode and hard-mode rules. <b>n</b> is further guesses from here, starting at 6 minus clues already entered. <b>Scan openers</b> tries starters in order until one of those strategies finishes within n. The table lists each starter’s expected information in bits.</p>
+    <p class="muted small">Pick a starting guess and expand its decision tree on the answers still possible. After the opener, each result shows the next guess and the words that remain — the same shape as <a href="https://jonathanolson.net/wordle-solver/">Jonathan Olson’s solver</a>. This tree is built in the browser for the list you have loaded. It is not his precomputed NYT Wordle tree: the built-in packs are ENABLE subsets (SALET and SOARE are not in them; TARPS is on the guess list). The live WordleBot pack is a separate third-party copy of the NYT lists. Every answer is equally likely, and a long hard-mode list is too big for an exhaustive proof. The guarantee checkbox is unchanged and still fail-closed. Here one concrete strategy is played instead. Later guesses use the active guess mode and hard-mode rules. <b>n</b> is further guesses from here, starting at 6 minus clues already entered. <b>Scan openers</b> tries starters in order until one of those strategies finishes within n. The table lists each starter’s expected information in bits.</p>
     <div class="opener-picks" id="treePicks"></div>
     <div class="tablewrap" id="treeOpenerWrap" hidden>
       <table id="treeOpenerTable" class="data">
@@ -223,7 +246,7 @@
       <button type="button" id="treeScan" class="ghost" aria-pressed="false">Scan openers</button>
       <span id="treeStatus" class="muted small" role="status" aria-live="polite"></span>
     </div>
-    <p class="muted small" id="treeScanHelp">Scan openers tries each starter in order and stops at the first played strategy with max depth ≤ n. A shortlist line that finishes within n counts; the stronger “guaranteed” label is not required. Order: the pack’s opener list when it has one (English Wordle: SLATE, TARPS, CRANE, CRAMP, TRACE, STARE, CRATE, RAISE, ALERT, LATER), skipping any that are not legal guesses in the loaded pack. A pack with no list is ranked by expected information in bits (top 10). When 16 or fewer answers remain, it continues with those answers, then other dictionary guesses, then answers already ruled out, up to 40 more. The scan uses this card’s hard mode, guess mode, solution layer, later-guess policy, budget n, and the clues already entered.</p>
+    <p class="muted small" id="treeScanHelp">Scan openers tries each starter in order and stops at the first played strategy with max depth ≤ n. A shortlist line that finishes within n counts; the stronger “guaranteed” label is not required. Order: the pack’s opener list when it has one (English Wordle and the live WordleBot pack: SLATE, TARPS, CRANE, CRAMP, TRACE, STARE, CRATE, RAISE, ALERT, LATER), skipping any that are not legal guesses in the loaded pack. A pack with no list is ranked by expected information in bits (top 10). When 16 or fewer answers remain, it continues with those answers, then other dictionary guesses, then answers already ruled out, up to 40 more. The scan uses this card’s hard mode, guess mode, solution layer, later-guess policy, budget n, and the clues already entered.</p>
     <p class="warn small" id="treeStale" hidden>Settings or clues changed. This tree is the previous one.</p>
     <div id="treeSummary"></div>
     <div id="treeFamilies"></div>
@@ -232,7 +255,7 @@
 </main>
 
 <footer class="foot">
-  <p>Runs entirely in your browser — nothing is uploaded. Built-in English packs: ENABLE word list (public domain); answer subsets chosen by word frequency. See <a href="README.txt">README</a>.</p>
+  <p>Runs entirely in your browser — nothing is uploaded. Wordle’s default lists are a third-party copy of the NYT WordleBot lists, loaded live from <a href="https://github.com/WordGamesBot/wordgamesbot.github.io">WordGamesBot</a>. ENABLE packs (public domain; answer subsets chosen by word frequency) remain available for other lengths and as the 5-letter reference. See <a href="README.txt">README</a>.</p>
 </footer>
 <script src="core.js"></script>
 <script src="tree.js"></script>
@@ -240,6 +263,7 @@
 <script src="engine.js"></script>
 <script src="renderers.js"></script>
 <script src="tree-status.js"></script>
+<script src="list-parse.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

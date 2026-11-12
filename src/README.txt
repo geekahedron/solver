@@ -22,6 +22,15 @@ Word lists / attribution
   the shipped lists contain ENABLE words only. 5-letter: 2,400 answers / 8,636 guesses.
 * These are NOT the official NYT Wordle lists. Paste or upload any lists you like
   (Setup -> answer list / extra guess list); save them as a named pack in your browser.
+* Wordle opens on Wordle — NYT WordleBot lists (live). api/wordlebot.php
+  keeps a copy in data/wordlebot/ (hidden from the web) and refreshes it
+  from WordGamesBot at most every 24 hours. A failed refresh keeps the last
+  good file. The browser does not store those lists. Default answers are
+  Answers_with_ED.js and default guesses are Words.js. The menu can switch
+  to Answers.js (no regular -ED) and Guesses.js. ENABLE 4–8, including
+  ENABLE 5-letter, stays available as a reference. If the host cache and
+  WordGamesBot are both unavailable, the page shows ENABLE 5-letter.
+  data/wordlebot must be writable by PHP. See the repo README.
 
 Scoring
 -------

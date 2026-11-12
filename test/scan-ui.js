@@ -37,7 +37,7 @@ async function waitStatus(page, re, timeout) {
     let releasePack;
     const gate = new Promise(r => { releasePack = r; });
     queued.on('request', req => {
-      if (req.url().indexOf('wordle-en.json') !== -1) gate.then(() => req.continue()).catch(() => req.continue());
+      if (req.url().indexOf('wordle-nyt.json') !== -1) gate.then(() => req.continue()).catch(() => req.continue());
       else req.continue();
     });
     await queued.goto(base, { waitUntil: 'domcontentloaded' });
