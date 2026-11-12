@@ -15,6 +15,7 @@
     { id: 'en6', name: 'English 6-letter (built-in)', variant: 'wordle-en-6' },
     { id: 'en7', name: 'English 7-letter (built-in)', variant: 'wordle-en-7' },
     { id: 'en8', name: 'English 8-letter (built-in)', variant: 'wordle-en-8' },
+    { id: 'nyt', name: 'Wordle — NYT WordleBot lists (live)', manifest: 'packs/wordle-nyt.json', variant: 'wordle-nyt', remote: true },
     { id: 'dungleon', name: 'Dungleon', manifest: 'packs/dungleon.json', variant: 'dungleon' },
     { id: 'blank', name: 'Custom — paste / upload your own lists', blank: true },
     { id: 'digits', name: 'Custom digits (0-9) — paste your list', blank: true, preset: { L: 5, alpha: '0123456789' } },
@@ -24,8 +25,16 @@
   var cfg = { L: 5, alpha: 'abcdefghijklmnopqrstuvwxyz', ci: true, tok: false, rule: 'wordle', valid: 'both',
     mode: 'avg', hard: 'off', ansOnly: false, max: 12000, top: 15, notation: 'GYB',
     layer: 'known', guessMode: 'dictionary', page: 'both',
-    guarantee: false, steps: 6, stepsTouched: false, treePolicy: 'worst' };
+    guarantee: false, steps: 6, stepsTouched: false, treePolicy: 'worst',
+    nytAnswers: 'with-ed', nytGuesses: 'all' };
   var packId = 'en5';
+  var readyPackId = null;
+  var keepPackWarn = false;
+  var packWarn = '';
+  var nytWant = { answers: 'with-ed', guesses: 'all' };
+  var nytLoaded = null;
+  var nytCache = Object.create(null);
+  var nytFilling = false;
   var packGuessDefault = null;
   var engine = null;
   var packPhase = 'idle';
@@ -454,6 +463,7 @@
     sel.innerHTML = BUILTIN.map(function (p) { return '<option value="' + p.id + '">' + esc(p.name) + '</option>'; }).join('') +
       Object.keys(sp).map(function (k) { return '<option value="saved:' + esc(k) + '">★ ' + esc(k) + '</option>'; }).join('');
     sel.value = packId;
+    syncNytPanel();
   }
   function readCfgFromUI() {
     cfg.L = Math.max(1, Math.min(20, parseInt($('cfgL').value, 10) || 5));
@@ -473,21 +483,31 @@
     applyPage(cfg.page || 'both', true);
   }
   function reportPack(keepClues) {
+    if (keepPackWarn) keepPackWarn = false;
+    else setPackWarn('');
     var extraGuesses = 0, fi;
     for (fi = 0; fi < engine.flags.length; fi++) if (engine.flags[fi].guess && !engine.flags[fi].known) extraGuesses++;
-    var msg = engine.nKnown.toLocaleString() + ' answers, ' + extraGuesses.toLocaleString() + ' extra guesses';
-    if (engine.pack.lists && engine.pack.lists.theoretical === 'generated') {
-      msg += ' · ' + engine.theoreticalIdx.length.toLocaleString() + ' theoretical';
+    var msg;
+    if (engine.pack.listSource) {
+      msg = remoteStatus(engine);
+      if (engine.rej) msg += ' · ' + engine.rej + ' entries skipped (wrong length/alphabet)';
+    } else {
+      msg = engine.nKnown.toLocaleString() + ' answers, ' + extraGuesses.toLocaleString() + ' extra guesses';
+      if (engine.pack.lists && engine.pack.lists.theoretical === 'generated') {
+        msg += ' · ' + engine.theoreticalIdx.length.toLocaleString() + ' theoretical';
+      }
+      if (engine.ruleDrift && engine.ruleDrift.length) {
+        msg += ' · ' + engine.ruleDrift.length + ' known answers outside the generated rules (' +
+          engine.ruleDrift.slice(0, 8).join(', ') + (engine.ruleDrift.length > 8 ? ', …' : '') + ')';
+      }
+      if (engine.rej) msg += ' · ' + engine.rej + ' entries skipped (wrong length/alphabet)';
+      if (engine.dup) msg += ' · ' + engine.dup + ' duplicates merged';
     }
-    if (engine.ruleDrift && engine.ruleDrift.length) {
-      msg += ' · ' + engine.ruleDrift.length + ' known answers outside the generated rules (' +
-        engine.ruleDrift.slice(0, 8).join(', ') + (engine.ruleDrift.length > 8 ? ', …' : '') + ')';
-    }
-    if (engine.rej) msg += ' · ' + engine.rej + ' entries skipped (wrong length/alphabet)';
-    if (engine.dup) msg += ' · ' + engine.dup + ' duplicates merged';
     document.body.classList.toggle('case-sensitive', !!(engine.pack && engine.pack.caseInsensitive === false));
     $('packMsg').textContent = msg;
-    $('packSummary').textContent = ($('packSel').selectedOptions[0] || {}).textContent + ' · ' + engine.nKnown.toLocaleString() + ' answers';
+    var summary = ($('packSel').selectedOptions[0] || {}).textContent + ' · ' + engine.nKnown.toLocaleString() + ' answers';
+    if (engine.pack.listSource) summary += ' · ' + engine.guessIdx.length.toLocaleString() + ' guesses';
+    $('packSummary').textContent = summary;
     dropTree();
     cfg.L = engine.pack.length;
     if (!keepClues) clues = [];
@@ -499,6 +519,8 @@
     refresh();
     packPhase = 'ready';
     packError = '';
+    readyPackId = packId;
+    renderNytCounts();
     scheduleTreeFlush();
   }
   function mountCustom(keepClues) {
@@ -545,12 +567,229 @@
     else if (mode === 'answersOnly') { cfg.valid = 'both'; cfg.hard = 'off'; cfg.ansOnly = true; }
     else { cfg.valid = 'both'; cfg.hard = 'off'; cfg.ansOnly = false; cfg.guessMode = 'dictionary'; }
   }
+  function setPackWarn(text) {
+    packWarn = text || '';
+    var el = $('packWarn');
+    if (!el) return;
+    el.hidden = !packWarn;
+    el.textContent = packWarn;
+    if (packWarn && $('setupCard')) $('setupCard').open = true;
+  }
+  function syncNytPanel() {
+    var el = $('nytSources');
+    if (el) el.hidden = packId !== 'nyt';
+    if (packId !== 'nyt') renderNytCounts();
+  }
+  function renderNytCounts() {
+    var el = $('nytCounts');
+    if (!el) return;
+    var src = engine && engine.pack && engine.pack.listSource;
+    if (!src || packId !== 'nyt') { el.textContent = ''; return; }
+    el.textContent = 'Loaded ' + src.answerCount.toLocaleString() + ' answers from ' + src.answers.file +
+      ' and ' + src.guessCount.toLocaleString() + ' guesses from ' + src.guesses.file + '.';
+  }
+  function remoteStatus(eng) {
+    var src = eng.pack.listSource;
+    return 'Live from WordGamesBot · ' + src.answers.label + ': ' + eng.nKnown.toLocaleString() +
+      ' answers · ' + src.guesses.label + ': ' + eng.guessIdx.length.toLocaleString() + ' valid guesses';
+  }
+  function packLabel(id) {
+    var i;
+    if (!id) return 'the built-in English pack';
+    if (id.indexOf('saved:') === 0) return 'the saved pack ' + id.slice(6);
+    for (i = 0; i < BUILTIN.length; i++) if (BUILTIN[i].id === id) return BUILTIN[i].name;
+    return 'the previous pack';
+  }
+  function remoteErrorText(err) {
+    var msg = (err && err.message) ? err.message : String(err || 'the lists could not be fetched');
+    if (msg === 'Failed to fetch' || msg === 'Load failed' || msg === 'NetworkError when attempting to fetch resource.') {
+      return 'the browser could not reach GitHub (' + msg + ')';
+    }
+    return msg;
+  }
+  function pickRemote(list, id) {
+    var i, fallback = null;
+    if (!list || !list.length) throw new Error('Pack is missing a word list');
+    for (i = 0; i < list.length; i++) if (list[i].default) fallback = list[i];
+    if (!fallback) fallback = list[0];
+    for (i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+    return fallback;
+  }
+  function fillNytSelects(manifest) {
+    if (!$('nytAnswers') || !manifest || !manifest.remote) return;
+    nytFilling = true;
+    function fill(sel, list, chosen) {
+      sel.innerHTML = list.map(function (item) {
+        return '<option value="' + esc(item.id) + '">' + esc(item.label) + '</option>';
+      }).join('');
+      sel.value = chosen;
+    }
+    fill($('nytAnswers'), manifest.remote.answers, nytWant.answers);
+    fill($('nytGuesses'), manifest.remote.guesses, nytWant.guesses);
+    nytFilling = false;
+  }
+  function fetchRemoteText(url, timeoutMs) {
+    var ms = timeoutMs || 12000;
+    var ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+    var opts = { cache: 'no-cache' };
+    if (ctrl) opts.signal = ctrl.signal;
+    return new Promise(function (resolve, reject) {
+      var settled = false;
+      var timer = null;
+      function cleanup() { if (timer) clearTimeout(timer); }
+      function ok(v) { if (settled) return; settled = true; cleanup(); resolve(v); }
+      function bad(e) { if (settled) return; settled = true; cleanup(); reject(e); }
+      timer = setTimeout(function () {
+        if (ctrl) ctrl.abort();
+        else bad(new Error('timed out after ' + Math.round(ms / 1000) + 's'));
+      }, ms);
+      fetch(url, opts).then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.text();
+      }).then(ok).catch(function (e) {
+        if (e && e.name === 'AbortError') bad(new Error('timed out after ' + Math.round(ms / 1000) + 's'));
+        else bad(e);
+      });
+    });
+  }
+  function fetchRemoteList(spec, length, timeoutMs) {
+    var cached = nytCache[spec.url];
+    if (cached) return Promise.resolve(cached);
+    return fetchRemoteText(spec.url, timeoutMs).then(function (text) {
+      var parsed = window.SolverListParse.parseConstArray(text, {
+        length: length,
+        minCount: spec.minCount,
+        maxCount: spec.maxCount,
+        caseInsensitive: true
+      });
+      if (!parsed.ok) throw new Error(spec.file + ': ' + parsed.error);
+      var rec = { words: parsed.words, count: parsed.count, url: spec.url };
+      nytCache[spec.url] = rec;
+      return rec;
+    }).catch(function (e) {
+      var msg = (e && e.message) ? e.message : 'could not be fetched';
+      if (msg.indexOf(spec.file) === 0) throw e;
+      throw new Error(spec.file + ': ' + msg);
+    });
+  }
+  function mountFetchedPack(pack, manifest, variant, builtin, answersText, guessesText, rules, keepClues, applyDefaults) {
+    cfg.L = pack.length; cfg.tok = pack.delimiter !== 'none'; cfg.ci = pack.caseInsensitive;
+    cfg.alpha = typeof manifest.alphabet === 'string' ? manifest.alphabet : cfg.alpha;
+    cfg.rule = pack.feedback === 'simple' ? 'simple' : 'wordle';
+    applyDeclaredGuessMode((variant && variant.guessMode) || manifest.guessMode || (builtin && builtin.guessMode) || null, applyDefaults);
+    writeCfgToUI();
+    $('ansText').value = String(answersText || '').trim();
+    $('guessText').value = String(guessesText || '').trim();
+    pack.rulesImpl = rules;
+    engine = window.SolverEngine.create(pack, { answers: answersText || '', guesses: guessesText || '' });
+    reportPack(keepClues);
+  }
+  function failRemotePack(err, previousReady) {
+    var why = remoteErrorText(err);
+    var Parse = window.SolverListParse;
+    var plan = (Parse && Parse.choosePackFallback) ? Parse.choosePackFallback({
+      haveReady: !!(engine && previousReady),
+      previousId: previousReady,
+      requestedId: 'nyt',
+      fallbackId: 'en5'
+    }) : ((engine && previousReady) ? { action: 'keep', packId: previousReady } : { action: 'load', packId: 'en5' });
+    packError = why;
+    failQueuedPack();
+    packError = '';
+    if (plan.action === 'keep') {
+      var stayedLive = plan.packId === 'nyt' && engine && engine.pack && engine.pack.listSource;
+      if (stayedLive && nytLoaded) {
+        nytWant.answers = nytLoaded.answers;
+        nytWant.guesses = nytLoaded.guesses;
+        cfg.nytAnswers = nytLoaded.answers;
+        cfg.nytGuesses = nytLoaded.guesses;
+        if ($('nytAnswers')) $('nytAnswers').value = nytLoaded.answers;
+        if ($('nytGuesses')) $('nytGuesses').value = nytLoaded.guesses;
+        var src = engine.pack.listSource;
+        setPackWarn('Could not switch WordleBot lists (' + why + '). Still using ' +
+          src.answers.label + ' (' + engine.nKnown.toLocaleString() + ' answers) and ' +
+          src.guesses.label + ' (' + engine.guessIdx.length.toLocaleString() + ' guesses).');
+        $('packMsg').textContent = remoteStatus(engine);
+      } else {
+        packId = plan.packId;
+        fillPackSel();
+        setPackWarn('Could not load the WordleBot lists (' + why + '). They are fetched live from the WordGamesBot repo and are not stored in this page. Staying on ' + packLabel(plan.packId) + '.');
+        $('packMsg').textContent = 'WordleBot lists did not load. This pack is unchanged.';
+      }
+      packPhase = 'ready';
+      scheduleScore();
+      saveState();
+      return Promise.resolve();
+    }
+    setPackWarn('Could not load the WordleBot lists (' + why + '). They are fetched live from the WordGamesBot repo and are not stored in this page. Showing ' + packLabel(plan.packId) + ' instead.');
+    keepPackWarn = true;
+    packId = plan.packId;
+    fillPackSel();
+    return loadPack(plan.packId, false);
+  }
+  function fetchAndMountNyt(gen, keepClues, applyDefaults, builtin) {
+    function current() { return gen === packGen; }
+    if (!window.SolverListParse) return Promise.reject(new Error('Word list parser failed to load'));
+    return fetchManifest(builtin.manifest).then(function (manifest) {
+      if (!current()) return;
+      if (!manifest.remote || !manifest.remote.answers || !manifest.remote.guesses) {
+        throw new Error('Pack has no remote lists');
+      }
+      var variant = null;
+      (manifest.variants || []).forEach(function (v) { if (v.id === builtin.variant) variant = v; });
+      if (!variant) throw new Error('missing variant ' + builtin.variant);
+      var pack = Pack.normalize(manifest, variant);
+      var ans = pickRemote(manifest.remote.answers, nytWant.answers || cfg.nytAnswers);
+      var gue = pickRemote(manifest.remote.guesses, nytWant.guesses || cfg.nytGuesses);
+      nytWant.answers = ans.id;
+      nytWant.guesses = gue.id;
+      cfg.nytAnswers = ans.id;
+      cfg.nytGuesses = gue.id;
+      fillNytSelects(manifest);
+      var timeoutMs = manifest.remote.timeoutMs || 12000;
+      return Promise.all([
+        fetchRemoteList(ans, pack.length, timeoutMs),
+        fetchRemoteList(gue, pack.length, timeoutMs),
+        Pack.loadRules(pack, function (rel) {
+          return fetch('packs/' + rel).then(function (r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.text();
+          });
+        })
+      ]).then(function (parts) {
+        if (!current()) return;
+        pack.listSource = {
+          repo: manifest.remote.repo,
+          answers: ans,
+          guesses: gue,
+          answerCount: parts[0].count,
+          guessCount: parts[1].count
+        };
+        nytLoaded = { answers: ans.id, guesses: gue.id };
+        mountFetchedPack(pack, manifest, variant, builtin, parts[0].words.join('\n'), parts[1].words.join('\n'), parts[2], keepClues, applyDefaults);
+      });
+    });
+  }
+  function onNytChoice() {
+    if (nytFilling || packId !== 'nyt') return;
+    var answers = $('nytAnswers').value || nytWant.answers;
+    var guesses = $('nytGuesses').value || nytWant.guesses;
+    var src = engine && engine.pack && engine.pack.listSource;
+    if (src && src.answers.id === answers && src.guesses.id === guesses) return;
+    nytWant.answers = answers;
+    nytWant.guesses = guesses;
+    cfg.nytAnswers = answers;
+    cfg.nytGuesses = guesses;
+    loadPack('nyt', true, false);
+  }
   function loadPack(id, keepClues, applyDefaults) {
     var gen = ++packGen;
+    var previousReady = readyPackId;
     treeFlushToken++;
     cancelScore();
     packPhase = 'loading';
     packId = id;
+    syncNytPanel();
     function current() { return gen === packGen; }
     if (id.indexOf('saved:') === 0) {
       var p = savedPacks()[id.slice(6)];
@@ -573,6 +812,13 @@
       writeCfgToUI(); $('ansText').value = ''; $('guessText').value = '';
       $('setupCard').open = true; mountCustom(false); return Promise.resolve();
     }
+    if (b.remote) {
+      $('packMsg').textContent = 'Loading WordleBot lists…';
+      return fetchAndMountNyt(gen, !!keepClues, !!applyDefaults, b).catch(function (e) {
+        if (!current()) return;
+        return failRemotePack(e, previousReady);
+      });
+    }
     $('packMsg').textContent = 'Loading…';
     return fetchManifest(b.manifest || 'packs/wordle-en.json').then(function (manifest) {
       if (!current()) return;
@@ -589,18 +835,11 @@
         Pack.loadRules(pack, fetchPack)
       ]).then(function (t) {
         if (!current()) return;
-        cfg.L = pack.length; cfg.tok = pack.delimiter !== 'none'; cfg.ci = pack.caseInsensitive;
-        cfg.alpha = typeof manifest.alphabet === 'string' ? manifest.alphabet : cfg.alpha;
-        cfg.rule = pack.feedback === 'simple' ? 'simple' : 'wordle';
-        applyDeclaredGuessMode(variant.guessMode || manifest.guessMode || b.guessMode || null, applyDefaults);
-        writeCfgToUI();
-        $('ansText').value = t[0].trim(); $('guessText').value = (t[1] || '').trim();
-        pack.rulesImpl = t[2];
-        engine = window.SolverEngine.create(pack, { answers: t[0], guesses: t[1] || '' });
-        reportPack(keepClues);
+        mountFetchedPack(pack, manifest, variant, b, t[0], t[1] || '', t[2], keepClues, applyDefaults);
       });
     }).catch(function (e) {
       if (!current()) return;
+      keepPackWarn = false;
       packPhase = 'failed';
       packError = (e && e.message) ? e.message : String(e || 'load failed');
       $('packMsg').textContent = 'Could not load built-in pack (' + packError + '). Paste or upload lists instead.';
@@ -609,6 +848,8 @@
     });
   }
   $('packSel').addEventListener('change', function () { loadPack($('packSel').value, false, true); });
+  if ($('nytAnswers')) $('nytAnswers').addEventListener('change', onNytChoice);
+  if ($('nytGuesses')) $('nytGuesses').addEventListener('change', onNytChoice);
   $('applyBtn').addEventListener('click', function () { mountCustom(true); });
   $('savePackBtn').addEventListener('click', function () {
     var name = prompt('Name for this pack (saved in this browser only):', ''); if (!name) return;
@@ -1702,11 +1943,15 @@
   function init() {
     var st = null; try { st = JSON.parse(localStorage.getItem(LS_STATE) || 'null'); } catch (e) {}
     if (st && st.cfg) {
-        ['mode', 'hard', 'ansOnly', 'max', 'top', 'notation', 'valid', 'layer', 'guessMode', 'page', 'guarantee', 'steps', 'stepsTouched', 'treePolicy'].forEach(function (k) {
+        ['mode', 'hard', 'ansOnly', 'max', 'top', 'notation', 'valid', 'layer', 'guessMode', 'page', 'guarantee', 'steps', 'stepsTouched', 'treePolicy', 'nytAnswers', 'nytGuesses'].forEach(function (k) {
         if (st.cfg[k] !== undefined) cfg[k] = st.cfg[k];
       });
       if (!st.cfg.guessMode) cfg.guessMode = inferGuessMode();
     }
+    nytWant.answers = cfg.nytAnswers || 'with-ed';
+    nytWant.guesses = cfg.nytGuesses || 'all';
+    if ($('nytAnswers')) $('nytAnswers').value = nytWant.answers;
+    if ($('nytGuesses')) $('nytGuesses').value = nytWant.guesses;
     var pid = st && st.packId && (st.packId.indexOf('saved:') === 0 ? savedPacks()[st.packId.slice(6)] : BUILTIN.some(function (b) { return b.id === st.packId && !b.blank; })) ? st.packId : 'en5';
     packId = pid; fillPackSel(); writeCfgToUI();
     loadPack(pid, false).then(function () {

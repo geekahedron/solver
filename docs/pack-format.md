@@ -53,6 +53,14 @@ Case folding (`caseInsensitive`) happens before the split, and only for I/O.
 
 List paths are relative to `src/packs/`. `knownSolutions` is the published answer list. `guessList` is every allowed guess (for English, that file already includes the answers; duplicates are merged).
 
+### Remote lists
+
+A manifest may set `remote` instead of shipping list files. The page fetches each chosen URL at load time and parses a JavaScript const array as data (`src/list-parse.js`). It extracts quoted words of the pack length. It does not evaluate the file. `timeoutMs` aborts a slow response. Each answer or guess entry has `id`, `label`, `file`, `url`, `minCount`, and `maxCount`. `default: true` is the choice when the menu has no saved id. A count outside that range, an HTML body, or a file that is not a const array of words is a failed load.
+
+`src/packs/wordle-nyt.json` is that pack. Default answers are WordGamesBot’s `Answers_with_ED.js`. Default guesses are `Words.js`. The setup menu can switch to `Answers.js` (regular -ED verbs removed) and `Guesses.js` (the WordleBot guess subset). The same ten English openers apply, then any word that is not a legal guess is dropped. The built-in ENABLE packs stay the default. If the fetch fails and a pack is already on screen, that pack stays. If nothing has loaded, the page loads English 5-letter.
+
+`Words.js` is larger than the page’s “Max guesses to score” default (12,000), so opening Analysis letter-coverage filters it. The ten authored openers are the only words scored for the Bits column. Scan and Build tree keep their existing time limit. With at most 40 answers left, expected steps still scores a guess list of up to 20,000 rows.
+
 `openers` is an optional list of starter guesses. It may sit on the manifest or on one variant. A variant array replaces the manifest list. Omitting it inherits the manifest list. `[]` means that variant authors none.
 
 The Tree quick picks and Scan openers use that list, in that order, after dropping any word that is not a legal guess in the loaded lists. Case follows the pack. English folds case. Dungleon keeps it.
