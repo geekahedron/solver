@@ -29,11 +29,19 @@
     ]
   },
   "appearance": {
+    "keyboard": { "source": "sprite" },
+    "tiles": { "source": "image" },
     "sheet": {
       "url": "https://www.dungleon.com/images/elements/small/sprites.png?20230203",
       "cellWidth": 32,
       "cellHeight": 32,
-      "columns": 21
+      "columns": 21,
+      "rows": 1,
+      "offsetX": 0,
+      "offsetY": 0,
+      "gapX": 0,
+      "gapY": 0,
+      "cells": ["ar", "ba", "ch", "co", "dr", "fr", "go", "ki", "ma", "ne", "or", "sk", "sp", "th", "tr", "ty", "vi", "wa", "wi", "zo", "ca"]
     },
     "entities": {
       "W": { "label": "Warrior", "image": "https://www.dungleon.com/images/elements/big/wa.png", "sprite": { "index": 17 } },

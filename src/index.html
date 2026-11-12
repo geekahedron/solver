@@ -275,6 +275,63 @@
     </div>
     <p class="muted small" id="createRules"></p>
     <pre id="createSourceView" class="source-view" tabindex="0"></pre>
+    <details class="sprite-editor" id="spriteEditor" open>
+      <summary>Sprites and images</summary>
+      <p class="muted small">The keyboard and the tiles each choose a picture: an individual image, then a cell of the sheet, then the plain character. Pick <code>sprite</code> or <code>image</code> to force one of those, or <code>auto</code> for that order. A local file stays in this browser and is not written into the JSON.</p>
+      <div class="grid2">
+        <label>Sheet URL <input type="text" id="spriteUrl" spellcheck="false" placeholder="https://… or packs/…"></label>
+        <label>Local sheet file <input type="file" id="spriteFile" accept="image/png,image/gif,image/webp,image/jpeg"></label>
+      </div>
+      <div class="grid3">
+        <label>Cell width <input type="number" id="spriteCellW" min="1" max="512" value="32"></label>
+        <label>Cell height <input type="number" id="spriteCellH" min="1" max="512" value="32"></label>
+        <label>Columns <input type="number" id="spriteCols" min="1" max="64" value="1"></label>
+        <label>Rows <input type="number" id="spriteRows" min="1" max="64" value="1"></label>
+        <label>Offset X <input type="number" id="spriteOffX" min="0" max="4096" value="0"></label>
+        <label>Offset Y <input type="number" id="spriteOffY" min="0" max="4096" value="0"></label>
+        <label>Gap X <input type="number" id="spriteGapX" min="0" max="512" value="0"></label>
+        <label>Gap Y <input type="number" id="spriteGapY" min="0" max="512" value="0"></label>
+        <label>Keyboard source
+          <select id="spriteKeySource"><option value="auto">auto</option><option value="sprite">sprite</option><option value="image">image</option></select>
+        </label>
+        <label>Tiles source
+          <select id="spriteTileSource"><option value="auto">auto</option><option value="sprite">sprite</option><option value="image">image</option></select>
+        </label>
+      </div>
+      <div class="sprite-stage" id="spriteStage">
+        <img id="spriteSheetImg" alt="Sprite sheet">
+        <div id="spriteGrid" class="sprite-grid"></div>
+      </div>
+      <p class="muted small" id="spriteStatus">Load a sheet, click a numbered cell, then click a token.</p>
+      <div id="spriteTokens" class="sprite-tokens"></div>
+      <div class="grid2">
+        <div>
+          <p class="muted small">Keyboard preview</p>
+          <div id="spritePreviewKb" class="sprite-preview"></div>
+        </div>
+        <div>
+          <p class="muted small">Tile preview</p>
+          <div id="spritePreviewTiles" class="sprite-preview"></div>
+        </div>
+      </div>
+      <div class="tablewrap">
+        <table class="data" id="spriteMapTable">
+          <thead><tr><th>Cell</th><th>Sheet name</th><th>Token</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <h3>Individual images</h3>
+      <div class="tablewrap">
+        <table class="data" id="spriteImageTable">
+          <thead><tr><th>Token</th><th>Label</th><th>Image URL</th><th>Preview</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="row-btns">
+        <button type="button" id="spriteApply">Write into editor</button>
+        <span id="spriteMsg" class="muted small" role="status"></span>
+      </div>
+    </details>
     <label>Editor
       <div class="editor-box">
         <pre id="createGutter" class="editor-gutter" aria-hidden="true">1</pre>
@@ -322,7 +379,7 @@
         <dt><code>tokenRenderer</code>, <code>clueRenderer</code></dt>
         <dd>Tile chrome: <code>tiles/letters</code>, <code>tiles/cards</code>, <code>tiles/dungleon</code> (letters without forced capitals). Clues: <code>clues/wordle-gyb</code>, <code>clues/arrows-lr</code>, <code>clues/mastermind-pips</code>. These pick the tile shape. Pictures come from <code>appearance</code>.</dd>
         <dt><code>appearance</code> <small>(alias <code>images</code>)</small></dt>
-        <dd>Optional. Omit it and every token is drawn as its letter, as before. <code>sheet</code> is a sprite sheet for small keys and lists: <code>url</code> (http or https only), <code>cellWidth</code>, <code>cellHeight</code>, and <code>columns</code>. <code>entities</code> is keyed by the alphabet token, case-sensitive. Each entry may have <code>label</code> (accessible name and, if you omit <code>title</code>, the tooltip), <code>title</code>, <code>image</code> (a big tile URL), and <code>sprite</code> as <code>{ "index": 0 }</code> or <code>{ "x": 0, "y": 0 }</code> in cells, not pixels. The letter code stays the guess. If a picture fails to load, the letter is shown. <code>data:</code> and <code>javascript:</code> URLs are ignored.</dd>
+        <dd>Optional. Omit it and every token is drawn as its letter. <code>sheet</code> is a sprite sheet: <code>url</code> (http, https, or a relative path), <code>cellWidth</code>, <code>cellHeight</code>, <code>columns</code>, and optional <code>rows</code>, <code>offsetX</code>, <code>offsetY</code>, <code>gapX</code>, <code>gapY</code>. <code>entities</code> is keyed by the alphabet token, case-sensitive. Each entry may have <code>label</code>, <code>title</code>, <code>image</code> (its own picture), and <code>sprite</code> as <code>{ "index": 0 }</code> or <code>{ "col": 0, "row": 0 }</code>. <code>keyboard.source</code> and <code>tiles.source</code> are <code>auto</code> (image, then sprite, then the letter), <code>image</code>, or <code>sprite</code>. A picture that fails to load shows the letter. <code>data:</code> and <code>javascript:</code> URLs are ignored. The sprite editor on this tab writes this object.</dd>
         <dt><code>keyboard.rows</code></dt>
         <dd>Optional rows of alphabet tokens for the on-screen keyboard. Each string is inserted exactly, so <code>"s"</code> and <code>"S"</code> are different keys. A case-insensitive a–z alphabet with no <code>keyboard</code> uses QWERTY. Any other alphabet is wrapped in pack order. Backspace and Enter are added by the page.</dd>
       </dl>

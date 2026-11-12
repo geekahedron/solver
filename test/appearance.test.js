@@ -51,7 +51,15 @@ check('dungleon maps every alphabet letter to its sprite cell and big image', fu
   assert.strictEqual(letters.length, 20);
   assert.ok(pack.appearance && pack.appearance.sheet);
   assert.strictEqual(pack.appearance.sheet.columns, 21);
+  assert.strictEqual(pack.appearance.sheet.rows, 1);
+  assert.strictEqual(pack.appearance.sheet.gapX, 0);
+  assert.strictEqual(pack.appearance.keyboard.source, 'sprite');
+  assert.strictEqual(pack.appearance.tiles.source, 'image');
+  assert.strictEqual(pack.appearance.sheet.cells.length, 21);
+  assert.strictEqual(pack.appearance.sheet.cells[0], 'ar');
+  assert.strictEqual(pack.appearance.sheet.cells[20], 'ca');
   assert.strictEqual(pack.appearance.sheet.cellWidth, 32);
+  assert.deepStrictEqual(Pack.cellOrigin(pack.appearance.sheet, 17, 0), { x: 544, y: 0 });
   assert.ok(Pack.isHttpUrl(pack.appearance.sheet.url));
   letters.forEach(function (letter) {
     const spec = DUNGLEON[letter];
@@ -111,8 +119,8 @@ check('sprite html uses the cell column and escapes the sheet url', function () 
       entities: { W: { label: 'Warrior', sprite: { index: 17 }, image: 'https://example.com/wa.png' } }
     }
   });
-  assert.ok(html.indexOf('--col:17') > 0, html);
-  assert.ok(html.indexOf('--cols:21') > 0, html);
+  assert.ok(html.indexOf('--px:544') > 0, html);
+  assert.ok(html.indexOf('--sheetw:672') > 0, html);
   assert.ok(html.indexOf('aria-label="Warrior"') > 0, html);
   assert.ok(html.indexOf('https://example.com/wa.png') < 0, 'lists use the sheet, not the big image');
 });
@@ -195,6 +203,39 @@ check('validator accepts an inline list and an https list', function () {
   assert.strictEqual(Pack.classifyList('english5-answers.txt').kind, 'file');
   assert.strictEqual(Pack.classifyList('../secret.txt').kind, 'bad');
   assert.strictEqual(Pack.classifyList('javascript:alert(1)').kind, 'bad');
+});
+
+check('relative image urls are kept and a forced sprite source skips the big image', function () {
+  const pack = Pack.normalize({
+    id: 'rel',
+    name: 'Relative',
+    alphabet: 'A',
+    appearance: {
+      keyboard: { source: 'sprite' },
+      tiles: { source: 'image' },
+      sheet: { url: 'packs/assets/sheet.png', cellWidth: 16, cellHeight: 16, columns: 2, rows: 1, gapX: 2, offsetX: 1 },
+      entities: { A: { label: 'Aye', image: 'packs/assets/a.png', sprite: { col: 1, row: 0 } } }
+    }
+  }, { length: 1 });
+  assert.strictEqual(pack.appearance.sheet.url, 'packs/assets/sheet.png');
+  assert.strictEqual(pack.appearance.entities.A.image, 'packs/assets/a.png');
+  assert.deepStrictEqual(pack.appearance.entities.A.sprite, { col: 1, row: 0 });
+  assert.deepStrictEqual(Pack.cellOrigin(pack.appearance.sheet, 1, 0), { x: 1 + 16 + 2, y: 0 });
+  const tiles = Renderers.tiles('tiles/letters', ['A'], null, { appearance: pack.appearance, showImages: true, surface: 'tiles' });
+  const keys = Renderers.tiles('tiles/letters', ['A'], null, { appearance: pack.appearance, showImages: true, surface: 'keyboard' });
+  assert.ok(tiles.indexOf('packs/assets/a.png') > 0, tiles);
+  assert.ok(tiles.indexOf('sheet.png') < 0, tiles);
+  assert.ok(keys.indexOf('sheet.png') > 0, keys);
+  assert.ok(keys.indexOf('packs/assets/a.png') < 0, keys);
+  const bad = Pack.normalize({
+    id: 'js',
+    name: 'Js',
+    alphabet: 'A',
+    appearance: { sheet: { url: 'javascript:alert(1)', cellWidth: 8, cellHeight: 8, columns: 1 }, entities: { A: { label: 'Aye', image: 'javascript:alert(1)' } } }
+  }, { length: 1 });
+  assert.strictEqual(bad.appearance.sheet, null);
+  assert.strictEqual(bad.appearance.entities.A.image, undefined);
+  assert.strictEqual(bad.appearance.entities.A.label, 'Aye');
 });
 
 check('images alias is accepted and a pack with no appearance stays unset', function () {

@@ -71,11 +71,31 @@
     return out;
   }
 
-  // Image URLs from a pack are presentation only. http(s) only, no markup.
+  // Image URLs from a pack are presentation only. http(s) or a relative
+  // path. No scheme other than http(s), no "..", no markup.
   function isHttpUrl(value) {
     if (typeof value !== 'string' || !value || value.length > 2000) return false;
     if (/[\u0000-\u001f\u007f<>"'\\\s]/.test(value)) return false;
     return /^https?:\/\//i.test(value);
+  }
+
+  function isRelativeUrl(value) {
+    if (typeof value !== 'string' || !value || value.length > 2000) return false;
+    if (/[\u0000-\u001f\u007f<>"'\\\s]/.test(value)) return false;
+    if (value.indexOf('//') === 0) return false;
+    if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return false;
+    if (value.indexOf('..') >= 0) return false;
+    return true;
+  }
+
+  function isPresentationUrl(value) {
+    return isHttpUrl(value) || isRelativeUrl(value);
+  }
+
+  function artSource(block) {
+    if (!ownObject(block)) return 'auto';
+    if (block.source === 'sprite' || block.source === 'image' || block.source === 'auto') return block.source;
+    return 'auto';
   }
 
   function finiteNumber(n) {
@@ -88,10 +108,30 @@
 
   // appearance (alias: images) is optional. Tokens stay the data; this only
   // describes how to draw them. Unsafe URLs and bad cells are dropped.
+  function nonNeg(n, fallback) {
+    return finiteNumber(n) && n >= 0 ? n : fallback;
+  }
+
+  function spriteFrom(sp) {
+    if (finiteNumber(sp)) {
+      if (sp < 0 || Math.floor(sp) !== sp) return null;
+      return { index: sp };
+    }
+    if (!ownObject(sp)) return null;
+    if (finiteNumber(sp.index) && sp.index >= 0 && Math.floor(sp.index) === sp.index) return { index: sp.index };
+    if (finiteNumber(sp.col) && finiteNumber(sp.row) && sp.col >= 0 && sp.row >= 0) return { col: sp.col, row: sp.row };
+    if (finiteNumber(sp.x) && finiteNumber(sp.y) && sp.x >= 0 && sp.y >= 0) return { col: sp.x, row: sp.y };
+    return null;
+  }
+
+  // appearance (alias: images) is optional. Tokens stay the data; this only
+  // describes how to draw them. Unsafe URLs and bad cells are dropped.
+  // keyboard.source / tiles.source: "auto" (image, then sprite, then the
+  // letter), "image", or "sprite". A failed picture still falls back to the letter.
   function appearanceFrom(raw) {
     if (!ownObject(raw)) return null;
     var sheet = null;
-    if (ownObject(raw.sheet) && isHttpUrl(raw.sheet.url)) {
+    if (ownObject(raw.sheet) && isPresentationUrl(raw.sheet.url)) {
       var sw = finiteNumber(raw.sheet.cellWidth) ? raw.sheet.cellWidth : raw.sheet.width;
       var sh = finiteNumber(raw.sheet.cellHeight) ? raw.sheet.cellHeight : raw.sheet.height;
       var cols = raw.sheet.columns;
@@ -100,8 +140,20 @@
           url: raw.sheet.url,
           cellWidth: sw,
           cellHeight: sh,
-          columns: Math.floor(cols)
+          columns: Math.floor(cols),
+          rows: (finiteNumber(raw.sheet.rows) && raw.sheet.rows >= 1) ? Math.floor(raw.sheet.rows) : 1,
+          offsetX: nonNeg(raw.sheet.offsetX, 0),
+          offsetY: nonNeg(raw.sheet.offsetY, 0),
+          gapX: nonNeg(raw.sheet.gapX, 0),
+          gapY: nonNeg(raw.sheet.gapY, 0)
         };
+        if (Array.isArray(raw.sheet.cells)) {
+          var cells = [];
+          raw.sheet.cells.forEach(function (c) {
+            if (typeof c === 'string') cells.push(c);
+          });
+          if (cells.length) sheet.cells = cells;
+        }
       }
     }
     var entities = Object.create(null);
@@ -115,19 +167,16 @@
         var ent = {};
         if (typeof e.label === 'string' && e.label && e.label.length <= 80) ent.label = e.label;
         if (typeof e.title === 'string' && e.title && e.title.length <= 120) ent.title = e.title;
-        if (isHttpUrl(e.image)) ent.image = e.image;
-        var sp = e.sprite;
-        if (finiteNumber(sp)) ent.sprite = { index: Math.floor(sp) };
-        else if (ownObject(sp)) {
-          if (finiteNumber(sp.index)) ent.sprite = { index: Math.floor(sp.index) };
-          else if (finiteNumber(sp.x) && finiteNumber(sp.y)) ent.sprite = { x: sp.x, y: sp.y };
-        }
-        if (ent.sprite && ent.sprite.index != null && ent.sprite.index < 0) delete ent.sprite;
+        if (isPresentationUrl(e.image)) ent.image = e.image;
+        var sprite = spriteFrom(e.sprite);
+        if (sprite) ent.sprite = sprite;
         if (ent.image || ent.sprite || ent.label || ent.title) entities[key] = ent;
       });
     }
-    if (!sheet && !Object.keys(entities).length) return null;
-    return { sheet: sheet, entities: entities };
+    var keyboard = { source: artSource(raw.keyboard) };
+    var tiles = { source: artSource(raw.tiles) };
+    if (!sheet && !Object.keys(entities).length && keyboard.source === 'auto' && tiles.source === 'auto') return null;
+    return { sheet: sheet, entities: entities, keyboard: keyboard, tiles: tiles };
   }
 
   function copyKeyboard(raw) {
@@ -155,6 +204,7 @@
   var SHIPPED_RULES = { 'rules/wordle.js': 1, 'rules/dungleon.js': 1 };
 
   Pack.isHttpUrl = isHttpUrl;
+  Pack.isPresentationUrl = isPresentationUrl;
 
   Pack.alphabetTokens = function (pack) {
     if (!pack) return [];
@@ -201,6 +251,39 @@
     return wrapped;
   };
 
+  Pack.sheetMetrics = function (sheet) {
+    if (!sheet) return null;
+    var cols = sheet.columns || 1;
+    var rows = sheet.rows || 1;
+    var cw = sheet.cellWidth || 32;
+    var ch = sheet.cellHeight || cw;
+    var gx = sheet.gapX || 0;
+    var gy = sheet.gapY || 0;
+    var ox = sheet.offsetX || 0;
+    var oy = sheet.offsetY || 0;
+    return {
+      columns: cols,
+      rows: rows,
+      cellWidth: cw,
+      cellHeight: ch,
+      gapX: gx,
+      gapY: gy,
+      offsetX: ox,
+      offsetY: oy,
+      width: ox + cols * cw + Math.max(0, cols - 1) * gx,
+      height: oy + rows * ch + Math.max(0, rows - 1) * gy
+    };
+  };
+
+  Pack.cellOrigin = function (sheet, col, row) {
+    var m = Pack.sheetMetrics(sheet);
+    if (!m) return null;
+    return {
+      x: m.offsetX + col * (m.cellWidth + m.gapX),
+      y: m.offsetY + row * (m.cellHeight + m.gapY)
+    };
+  };
+
   Pack.spriteCell = function (sprite, columns) {
     if (!sprite) return null;
     columns = columns || 1;
@@ -208,6 +291,9 @@
       var index = Math.floor(sprite.index);
       if (index < 0 || columns < 1) return null;
       return { index: index, col: index % columns, row: Math.floor(index / columns) };
+    }
+    if (finiteNumber(sprite.col) && finiteNumber(sprite.row)) {
+      return { index: null, col: sprite.col, row: sprite.row };
     }
     if (finiteNumber(sprite.x) && finiteNumber(sprite.y)) {
       return { index: null, col: sprite.x, row: sprite.y };
@@ -692,7 +778,7 @@
       if (look.sheet != null && !ownObject(look.sheet)) {
         pushMsg(errors, lookPath + '.sheet', 'sheet must be an object with url, cellWidth, cellHeight, and columns.');
       } else if (ownObject(look.sheet)) {
-        if (!isHttpUrl(look.sheet.url)) pushMsg(errors, lookPath + '.sheet.url', 'Sprite sheet URL must be http(s). data:, javascript:, and relative URLs are not used.');
+        if (!isPresentationUrl(look.sheet.url)) pushMsg(errors, lookPath + '.sheet.url', 'Sprite sheet URL must be http(s) or a relative path. javascript: and data: are not used.');
         var cw = finiteNumber(look.sheet.cellWidth) ? look.sheet.cellWidth : look.sheet.width;
         var ch = finiteNumber(look.sheet.cellHeight) ? look.sheet.cellHeight : look.sheet.height;
         if (!finiteNumber(cw) || cw <= 0 || cw > 512) pushMsg(errors, lookPath + '.sheet.cellWidth', 'cellWidth must be a number from 1 to 512.');
@@ -700,8 +786,28 @@
         if (!finiteNumber(look.sheet.columns) || look.sheet.columns < 1 || Math.floor(look.sheet.columns) !== look.sheet.columns) {
           pushMsg(errors, lookPath + '.sheet.columns', 'columns must be a positive integer.');
         }
-        sheetOk = isHttpUrl(look.sheet.url) && finiteNumber(cw) && cw > 0 && finiteNumber(ch) && ch > 0 && finiteNumber(look.sheet.columns) && look.sheet.columns >= 1;
+        sheetOk = isPresentationUrl(look.sheet.url) && finiteNumber(cw) && cw > 0 && finiteNumber(ch) && ch > 0 && finiteNumber(look.sheet.columns) && look.sheet.columns >= 1;
+        ['offsetX', 'offsetY', 'gapX', 'gapY'].forEach(function (name) {
+          if (look.sheet[name] != null && (!finiteNumber(look.sheet[name]) || look.sheet[name] < 0)) {
+            pushMsg(errors, lookPath + '.sheet.' + name, name + ' must be a number >= 0.');
+          }
+        });
+        if (look.sheet.rows != null && (!finiteNumber(look.sheet.rows) || look.sheet.rows < 1 || Math.floor(look.sheet.rows) !== look.sheet.rows)) {
+          pushMsg(errors, lookPath + '.sheet.rows', 'rows must be a positive integer.');
+        }
+        if (look.sheet.cells != null && !Array.isArray(look.sheet.cells)) {
+          pushMsg(errors, lookPath + '.sheet.cells', 'cells must be an array of names, one per cell, in sheet order.');
+        }
       }
+      function checkArtSource(block, path) {
+        if (block == null) return;
+        if (!ownObject(block)) { pushMsg(errors, path, 'must be an object with source "auto", "sprite", or "image".'); return; }
+        if (block.source != null && block.source !== 'auto' && block.source !== 'sprite' && block.source !== 'image') {
+          pushMsg(errors, path + '.source', 'source must be "auto", "sprite", or "image".');
+        }
+      }
+      checkArtSource(look.keyboard, lookPath + '.keyboard');
+      checkArtSource(look.tiles, lookPath + '.tiles');
       if (look.entities != null && !ownObject(look.entities)) {
         pushMsg(errors, lookPath + '.entities', 'entities must be an object keyed by alphabet token.');
       } else if (ownObject(look.entities)) {
@@ -715,23 +821,16 @@
           if (e.label != null && typeof e.label !== 'string') pushMsg(errors, ep + '.label', 'label must be a string.');
           if (e.title != null && typeof e.title !== 'string') pushMsg(errors, ep + '.title', 'title must be a string.');
           if (!e.label && !e.title) pushMsg(warnings, ep + '.label', 'Add a label so the picture has accessible text and a tooltip.');
-          if (e.image != null && !isHttpUrl(e.image)) pushMsg(errors, ep + '.image', 'image must be an http(s) URL. The letter is shown if you omit it.');
+          if (e.image != null && !isPresentationUrl(e.image)) pushMsg(errors, ep + '.image', 'image must be an http(s) URL or a relative path. The letter is shown if you omit it.');
           var wantsSheet = false;
-          if (e.sprite != null && !ownObject(e.sprite) && !finiteNumber(e.sprite)) {
-            pushMsg(errors, ep + '.sprite', 'sprite must be { index } or { x, y } cell coordinates, not pixels.');
-          } else if (ownObject(e.sprite) || finiteNumber(e.sprite)) {
+          if (e.sprite != null && !spriteFrom(e.sprite)) {
+            pushMsg(errors, ep + '.sprite', 'sprite must be { index }, { col, row }, or { x, y } cell coordinates, not pixels.');
+          } else if (spriteFrom(e.sprite)) {
             wantsSheet = true;
             var sp = e.sprite;
-            if (finiteNumber(sp) || (ownObject(sp) && sp.index != null)) {
-              var index = finiteNumber(sp) ? sp : sp.index;
-              if (!finiteNumber(index) || index < 0 || Math.floor(index) !== index) {
-                pushMsg(errors, ep + '.sprite.index', 'index must be a non-negative integer.');
-              } else if (sheetOk && index >= look.sheet.columns && (look.sheet.rows == null)) {
-                var rowsGuess = Math.floor(index / look.sheet.columns);
-                if (rowsGuess > 64) pushMsg(errors, ep + '.sprite.index', 'index is far past this sheet.');
-              }
-            } else if (ownObject(sp)) {
-              if (!finiteNumber(sp.x) || !finiteNumber(sp.y)) pushMsg(errors, ep + '.sprite', 'Give sprite an index, or x and y cell coordinates.');
+            var index = finiteNumber(sp) ? sp : (ownObject(sp) ? sp.index : null);
+            if (index != null && sheetOk && look.sheet.rows && index >= look.sheet.columns * look.sheet.rows) {
+              pushMsg(errors, ep + '.sprite.index', 'index is past this sheet.');
             }
           }
           if (wantsSheet && !ownObject(look.sheet)) {

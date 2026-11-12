@@ -22,10 +22,14 @@
     return ['b', 'y', 'g'][digit] || 'b';
   }
 
-  function httpUrl(value) {
+  function presentationUrl(value) {
+    if (root.SolverPack && root.SolverPack.isPresentationUrl) return root.SolverPack.isPresentationUrl(value);
     if (typeof value !== 'string' || !value || value.length > 2000) return false;
     if (/[\u0000-\u001f\u007f<>"'\\\s]/.test(value)) return false;
-    return /^https?:\/\//i.test(value);
+    if (/^https?:\/\//i.test(value)) return true;
+    if (value.indexOf('//') === 0 || value.indexOf('..') >= 0) return false;
+    if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return false;
+    return true;
   }
 
   function entityOf(sym, opts) {
@@ -48,33 +52,66 @@
   }
 
   function spriteCell(sprite, columns) {
+    if (root.SolverPack && root.SolverPack.spriteCell) return root.SolverPack.spriteCell(sprite, columns);
     if (!sprite || !columns || columns < 1) return null;
     if (typeof sprite.index === 'number' && isFinite(sprite.index)) {
       var index = Math.floor(sprite.index);
       if (index < 0) return null;
       return { col: index % columns, row: Math.floor(index / columns) };
     }
-    if (typeof sprite.x === 'number' && typeof sprite.y === 'number' && isFinite(sprite.x) && isFinite(sprite.y)) {
-      if (sprite.x < 0 || sprite.y < 0) return null;
-      return { col: sprite.x, row: sprite.y };
+    var col = sprite.col != null ? sprite.col : sprite.x;
+    var row = sprite.row != null ? sprite.row : sprite.y;
+    if (typeof col === 'number' && typeof row === 'number' && isFinite(col) && isFinite(row)) {
+      if (col < 0 || row < 0) return null;
+      return { col: col, row: row };
     }
     return null;
   }
 
-  // Sprite sheet for small keys and lists. Big image for clue tiles.
-  // A missing picture leaves the letter in the tile; the page hides it
-  // until the image errors.
+  function metricsOf(sheet) {
+    if (root.SolverPack && root.SolverPack.sheetMetrics) return root.SolverPack.sheetMetrics(sheet);
+    var cols = sheet.columns || 1;
+    var rows = sheet.rows || 1;
+    var cw = sheet.cellWidth || 32;
+    var ch = sheet.cellHeight || cw;
+    var gx = sheet.gapX || 0;
+    var gy = sheet.gapY || 0;
+    var ox = sheet.offsetX || 0;
+    var oy = sheet.offsetY || 0;
+    return {
+      columns: cols, rows: rows, cellWidth: cw, cellHeight: ch,
+      width: ox + cols * cw + Math.max(0, cols - 1) * gx,
+      height: oy + rows * ch + Math.max(0, rows - 1) * gy,
+      offsetX: ox, offsetY: oy, gapX: gx, gapY: gy
+    };
+  }
+
+  // auto: individual image, then sprite cell, then the letter.
+  // image / sprite: that source, then the letter. A failed load is the letter.
+  function surfaceSource(opts) {
+    var app = opts && opts.appearance;
+    var surface = opts && opts.surface;
+    if (!surface) surface = opts && opts.art === 'sprite' ? 'keyboard' : 'tiles';
+    var block = app && app[surface];
+    var source = block && block.source;
+    if (source === 'sprite' || source === 'image' || source === 'auto') return source;
+    if (opts && opts.art === 'sprite') return 'sprite';
+    if (opts && opts.art === 'image') return 'image';
+    return 'auto';
+  }
+
   function pickArt(sym, opts) {
     if (!opts || opts.showImages === false || !sym) return null;
     var ent = entityOf(sym, opts);
     if (!ent) return null;
     var sheet = opts.appearance && opts.appearance.sheet;
-    var want = opts.art || 'image';
-    var spriteOk = !!(ent.sprite && sheet && httpUrl(sheet.url) && spriteCell(ent.sprite, sheet.columns));
-    var imageOk = !!(ent.image && httpUrl(ent.image));
-    if (want === 'sprite') {
-      if (spriteOk) return { kind: 'sprite', ent: ent };
+    var spriteOk = !!(ent.sprite && sheet && presentationUrl(sheet.url) && spriteCell(ent.sprite, sheet.columns));
+    var imageOk = !!(ent.image && presentationUrl(ent.image));
+    var source = surfaceSource(opts);
+    if (source === 'image') {
       if (imageOk) return { kind: 'image', ent: ent };
+    } else if (source === 'sprite') {
+      if (spriteOk) return { kind: 'sprite', ent: ent };
     } else {
       if (imageOk) return { kind: 'image', ent: ent };
       if (spriteOk) return { kind: 'sprite', ent: ent };
@@ -85,11 +122,14 @@
 
   function spriteHTML(ent, sheet) {
     var cell = spriteCell(ent.sprite, sheet.columns);
-    if (!cell) return '';
-    var cols = Math.floor(sheet.columns);
-    var col = Math.floor(cell.col);
-    var row = Math.floor(cell.row);
-    return '<span class="entity-sprite" style="--col:' + col + ';--row:' + row + ';--cols:' + cols + '">' +
+    var m = metricsOf(sheet);
+    if (!cell || !m) return '';
+    var originX = m.offsetX + cell.col * (m.cellWidth + m.gapX);
+    var originY = m.offsetY + cell.row * (m.cellHeight + m.gapY);
+    var style = '--cellw:' + m.cellWidth + ';--cellh:' + m.cellHeight +
+      ';--sheetw:' + m.width + ';--sheeth:' + m.height +
+      ';--px:' + originX + ';--py:' + originY;
+    return '<span class="entity-sprite" style="' + style + '">' +
       '<img class="entity-img" alt="" src="' + esc(sheet.url) + '"></span>';
   }
 
