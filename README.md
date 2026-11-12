@@ -80,6 +80,12 @@ chmod 775 data data/wordlebot
 
 There is no build step. Wordle works without PHP (the page then reads WordGamesBot directly), and the hosted copy uses the cache so a missing upstream still has the last good lists.
 
+## Deploy
+
+A merge to `master` that touches `src/` deploys automatically. The **Deploy to geekahedron.com** workflow runs `~/deploy/solver.sh` on a self-hosted runner on DJ’s server. The script keeps `tools/solver/data/wordlebot/` and never touches the root `.htaccess`.
+
+Manual re-run: Actions > Deploy > Run workflow.
+
 ## Game pack
 
 One pack describes a game. The page then toggles how you play it:
