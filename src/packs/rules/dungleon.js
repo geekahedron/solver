@@ -1,10 +1,15 @@
 // Dungleon pack script.
 // Loaded when the pack sets "rules": "script:rules/dungleon.js".
 //
-// Feedback is the get_clue from dungleon-solver.pl (marks r, y, Y, g, G).
-// Capital Y/G means the running count says the secret still has more copies
-// of that entity than the guess. This is not the older dungleon.pm get_clue,
-// which wrote "+" for a green-plus.
+// Feedback matches the live client's stage confirm (marks r, y, Y, g, G).
+// A mark is plus (Y or G) when the secret has more copies of that piece
+// than the guess. Every non-absent tile of that piece is plus; a red tile
+// never is, because an extra secret copy means every guess copy matched.
+// Greens are taken first, then yellows left to right. This is not a
+// left-to-right running count of copies seen so far: that count misses an
+// extra copy sitting to the right of the matched tile, so AWSCw against
+// ?WSCS was scored rgggr instead of rgGgr and the guess eliminated every
+// dungeon. The older dungleon.pm get_clue wrote "+" beside the mark.
 //
 // Theoretical solutions are generate_solutions from dungleon.pm: per-slot
 // alphabets, the filters below, then frogging and zombification. The cake/mimic
@@ -52,55 +57,56 @@ var DRAGON_CHEST5 = /D.*C$/;
 var built = null;
 
 // Scratch for feedbackIds. Ids are small; grow if a pack ever exceeds this.
-var GL = new Int16Array(256);
 var SL = new Int16Array(256);
 var USED = new Uint16Array(16);
 var MARK = new Int16Array(8);
 
 function ensureId(id) {
-  if (id < GL.length) return;
-  var n = GL.length;
+  if (id < SL.length) return;
+  var n = SL.length;
   while (n <= id) n *= 2;
-  var g2 = new Int16Array(n);
   var s2 = new Int16Array(n);
-  g2.set(GL);
   s2.set(SL);
-  GL = g2;
   SL = s2;
+}
+
+function consumeFirst(list, token) {
+  var i;
+  for (i = 0; i < list.length; i++) {
+    if (list[i] !== token) continue;
+    list.splice(i, 1);
+    return true;
+  }
+  return false;
 }
 
 function clueDigits(guess, secret) {
   var L = guess.length;
   var clue = new Array(L);
-  var gl = Object.create(null);
-  var sl = Object.create(null);
-  var i, g, s;
-  for (i = 0; i < L; i++) clue[i] = -1;
+  var left = [];
+  var guessCount = Object.create(null);
+  var secretCount = Object.create(null);
+  var i, g, s, more;
   for (i = 0; i < L; i++) {
     g = guess[i];
     s = secret[i];
-    if (gl[g] == null) gl[g] = 0;
-    if (sl[g] == null) sl[g] = 0;
-    if (sl[s] == null) sl[s] = 0;
-    if (g === s) clue[i] = sl[g] > gl[g] ? CORRECT_PLUS : CORRECT;
-    else {
-      gl[g]++;
-      sl[s]++;
-    }
+    left.push(s);
+    guessCount[g] = (guessCount[g] || 0) + 1;
+    secretCount[s] = (secretCount[s] || 0) + 1;
+    clue[i] = g === s ? CORRECT : -1;
   }
+  for (i = 0; i < L; i++) if (clue[i] === CORRECT) consumeFirst(left, guess[i]);
   for (i = 0; i < L; i++) {
     if (clue[i] !== -1) continue;
     g = guess[i];
-    if (!sl[g]) clue[i] = ABSENT;
-    else if (sl[g] <= gl[g]) {
-      clue[i] = PRESENT;
-      gl[g]--;
-      sl[g]--;
-    } else {
-      clue[i] = PRESENT_PLUS;
-      gl[g]--;
-      sl[g]--;
-    }
+    clue[i] = consumeFirst(left, g) ? PRESENT : ABSENT;
+  }
+  for (i = 0; i < L; i++) {
+    g = guess[i];
+    more = (secretCount[g] || 0) > (guessCount[g] || 0);
+    if (!more) continue;
+    if (clue[i] === CORRECT) clue[i] = CORRECT_PLUS;
+    else if (clue[i] === PRESENT) clue[i] = PRESENT_PLUS;
   }
   return clue;
 }
@@ -117,6 +123,8 @@ exports.feedback = function (guess, secret) {
 };
 
 // Hot path used by remaining-set checks and Analysis. Same marks as feedback.
+// SL holds unconsumed secret copies. After greens and yellows, a leftover
+// copy means the secret had more of that piece than the guess.
 exports.feedbackIds = function (g, go, a, ao, L) {
   var n = 0, i, gs, ss, p = 0, m = 1;
   for (i = 0; i < L; i++) {
@@ -124,38 +132,32 @@ exports.feedbackIds = function (g, go, a, ao, L) {
     ss = a[ao + i];
     ensureId(gs);
     ensureId(ss);
-    if (gs === ss) {
-      MARK[i] = SL[gs] > GL[gs] ? CORRECT_PLUS : CORRECT;
-    } else {
-      if (GL[gs] === 0 && SL[gs] === 0) USED[n++] = gs;
-      if (GL[ss] === 0 && SL[ss] === 0) USED[n++] = ss;
-      GL[gs]++;
-      SL[ss]++;
-      MARK[i] = -1;
-    }
+    if (SL[ss] === 0) USED[n++] = ss;
+    SL[ss]++;
+    MARK[i] = gs === ss ? CORRECT : -1;
+  }
+  for (i = 0; i < L; i++) {
+    if (MARK[i] !== CORRECT) continue;
+    SL[g[go + i]]--;
   }
   for (i = 0; i < L; i++) {
     if (MARK[i] !== -1) continue;
     gs = g[go + i];
-    if (SL[gs] === 0) MARK[i] = ABSENT;
-    else if (SL[gs] <= GL[gs]) {
+    if (SL[gs] > 0) {
       MARK[i] = PRESENT;
-      GL[gs]--;
       SL[gs]--;
-    } else {
-      MARK[i] = PRESENT_PLUS;
-      GL[gs]--;
-      SL[gs]--;
-    }
+    } else MARK[i] = ABSENT;
   }
   for (i = 0; i < L; i++) {
+    gs = g[go + i];
+    if (SL[gs] > 0) {
+      if (MARK[i] === CORRECT) MARK[i] = CORRECT_PLUS;
+      else if (MARK[i] === PRESENT) MARK[i] = PRESENT_PLUS;
+    }
     p += MARK[i] * m;
     m *= BASE;
   }
-  for (i = 0; i < n; i++) {
-    GL[USED[i]] = 0;
-    SL[USED[i]] = 0;
-  }
+  for (i = 0; i < n; i++) SL[USED[i]] = 0;
   return p;
 };
 
