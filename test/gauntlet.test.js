@@ -261,4 +261,65 @@ assert.ok(authored.bits.KZNCR > 0);
 const empty = Gauntlet.rankOpeners(Core, { rem: [], declared: false, keys: eng.keys });
 assert.deepStrictEqual(empty.words, []);
 
+// Floor 1 solved as VWSCR (ggggg). Floor 2 guess AWSCw, clue rgGgr:
+// slot 1 is not A, slot 2 is W, slot 3 is S and the secret has another S,
+// slot 4 is C, slot 5 is not w. The dungeons are ?WSCS. They already share
+// W/S/C with floor 1, so the shared-entity filter must not drop them.
+function played(word, text) {
+  const parsed = Pack.parseClue(text, pack);
+  assert.ok(parsed, text);
+  const made = eng.makeClue(word, parsed.digits);
+  assert.ok(!made.err, made.err || word);
+  return made;
+}
+function floorOf(clues) {
+  const parts = eng.replay(clues, 'known');
+  return {
+    known: parts.known.slice(),
+    theoretical: parts.theoretical.slice(),
+    clueSolution: Gauntlet.solvedClue(clues, eng.correctValues)
+  };
+}
+const wscs = ['KWSCS', 'VWSCS', 'tWSCS'];
+const floor1 = floorOf([played('VWSCR', 'ggggg')]);
+const floor2clue = played('AWSCw', 'rgGgr');
+const floor2 = floorOf([floor2clue]);
+const floor3 = floorOf([played('AWSCw', 'rgGgr')]);
+assert.strictEqual(floor1.clueSolution, 'VWSCR');
+assert.strictEqual(floor2clue.afterKnown, 1);
+assert.strictEqual(floor2clue.afterTheo, 3);
+assert.deepStrictEqual(names(floor2.known), ['VWSCS']);
+assert.deepStrictEqual(names(floor2.theoretical), wscs);
+wscs.forEach(function (word) {
+  assert.strictEqual(word.slice(1), 'WSCS', word);
+});
+
+view = Gauntlet.propagate(specFor([floor1, floor2, floor3], 'known'));
+assert.strictEqual(view.floors[0].solution, 'VWSCR');
+assert.strictEqual(view.floors[0].solutionSource, 'clue');
+assert.deepStrictEqual(view.floors[1].constraint.must, ['W', 'V', 'S', 'C', 'R']);
+assert.deepStrictEqual(names(view.floors[1].known), names(floor2.known));
+assert.deepStrictEqual(names(view.floors[1].theoretical), names(floor2.theoretical));
+// The only known answer solves floor 2 on the known layer. Floor 3's shared
+// set is VWSCR ∩ VWSCS. The same clue there still leaves every ?WSCS dungeon.
+assert.strictEqual(view.floors[1].solution, 'VWSCS');
+assert.strictEqual(view.floors[1].solutionSource, 'unique');
+assert.deepStrictEqual(view.floors[2].constraint.must, ['W', 'V', 'S', 'C']);
+assert.strictEqual(view.floors[2].constraint.partial, false);
+assert.deepStrictEqual(names(view.floors[2].known), ['VWSCS']);
+assert.deepStrictEqual(names(view.floors[2].theoretical), wscs);
+
+// On the theoretical layer floor 2 is still open (three dungeons). Floor 3's
+// bound is the entities of VWSCR that still appear in one of those dungeons.
+// R does not. K and t are not on floor 1. W, V, S, and C are. None of the
+// ?WSCS dungeons are removed.
+view = Gauntlet.propagate(specFor([floor1, floor2, floor3], 'theoretical'));
+assert.strictEqual(view.floors[1].solution, null);
+assert.strictEqual(view.floors[2].constraint.status, 'partial');
+assert.strictEqual(view.floors[2].constraint.partial, true);
+assert.deepStrictEqual(view.floors[2].constraint.theoreticalMust, ['W', 'V', 'S', 'C']);
+assert.deepStrictEqual(view.floors[2].constraint.knownMust, ['W', 'V', 'S', 'C']);
+assert.deepStrictEqual(names(view.floors[2].known), ['VWSCS']);
+assert.deepStrictEqual(names(view.floors[2].theoretical), wscs);
+
 console.log('ok gauntlet', view.floors.length, 'floors');

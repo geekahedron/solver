@@ -42,13 +42,23 @@ assert.strictEqual(marksOf('WCCCS', 'CMFCS'), 'YrrGg');
 assert.strictEqual(marksOf('WBBSC', 'AWSSB'), 'ryrgY');
 assert.strictEqual(marksOf('WBBCC', 'WBBCC'), 'ggggg');
 
+// The extra copy sits to the right of the green tile. A running count of
+// copies already seen marks that green plain (rgggr / ggggr) and then no
+// dungeon matches the real clue.
+assert.strictEqual(marksOf('VWSCS', 'AWSCw'), 'rgGgr');
+assert.strictEqual(marksOf('KWSCS', 'AWSCw'), 'rgGgr');
+assert.strictEqual(marksOf('tWSCS', 'AWSCw'), 'rgGgr');
+assert.strictEqual(marksOf('SSCCS', 'SSCCw'), 'GGggr');
+// CWSCS is ?WSCS, but the second chest makes slot 4 plus, so it is not rgGgr.
+assert.strictEqual(marksOf('CWSCS', 'AWSCw'), 'rgGGr');
+
 // Capital Y/G is not the Wordle collapse of the same guess.
 assert.deepStrictEqual(eng.feedbackDigits('CMFCS', 'WCCCS'), [3, 0, 0, 4, 2]);
 assert.deepStrictEqual(eng.feedbackDigits('CMFCS', 'WCSCS'), [1, 0, 0, 2, 4]);
 assert.notDeepStrictEqual(eng.feedbackDigits('CMFCS', 'WCCCS'), [1, 0, 0, 2, 2]);
 
-['WCSCS', 'WCCCS', 'WBBSC', 'WBBCC'].forEach(function (solution) {
-  ['CMFCS', 'AWSSB', 'WBBCC', solution].forEach(function (guess) {
+['WCSCS', 'WCCCS', 'WBBSC', 'WBBCC', 'VWSCS', 'KWSCS', 'tWSCS', 'SSCCS', 'CWSCS'].forEach(function (solution) {
+  ['CMFCS', 'AWSSB', 'WBBCC', 'AWSCw', 'SSCCw', solution].forEach(function (guess) {
     const fb = rules.feedback(guess, solution);
     const pat = rules.feedbackIds(ids(guess), 0, ids(solution), 0, 5);
     assert.strictEqual(pat, fb.pat, guess + ' vs ' + solution);
@@ -192,5 +202,19 @@ assert.deepStrictEqual(parts.known.map(function (i) { return eng.keys[i]; }).sor
 ]);
 assert.strictEqual(parts.known.length, 5);
 assert.strictEqual(parts.theoretical.length, 17);
+
+// Normal (non-gauntlet) mode: AWSCw + rgGgr is exactly the ?WSCS dungeons
+// the generator allows. Slot 1 is K, V, or t. VWSCS is in the known list.
+const rightPlus = eng.makeClue('AWSCw', Pack.parseClue('rgGgr', pack).digits);
+const rightParts = eng.partition([rightPlus]);
+assert.deepStrictEqual(rightParts.known.map(function (i) { return eng.keys[i]; }).sort(), ['VWSCS']);
+assert.deepStrictEqual(rightParts.theoretical.map(function (i) { return eng.keys[i]; }).sort(), [
+  'KWSCS', 'VWSCS', 'tWSCS'
+]);
+rightParts.theoretical.forEach(function (i) {
+  const word = eng.keys[i];
+  assert.strictEqual(word.slice(1), 'WSCS', word);
+  assert.notStrictEqual(word.charAt(0), 'A', word);
+});
 
 console.log('ok dungleon', eng.nKnown, 'known', eng.theoreticalIdx.length, 'theoretical');
