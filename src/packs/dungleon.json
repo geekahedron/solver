@@ -1,7 +1,7 @@
 {
   "id": "dungleon",
   "name": "Dungleon",
-  "note": "Entity dungeon. Known answers are the 397 unique official dungeons from the previous-solutions history (prevsolutions.txt): six malformed 6-character lines and two experimental cake-letter (k) entries are excluded, and duplicates are merged. Theoretical solutions are generated from the dungeon rules (slot alphabets, filters, frogging, zombification).",
+  "note": "Entity dungeon. Known answers are the official dungeons in prevsolutions.txt: six malformed 6-character lines are excluded and duplicates are merged. The file has 402 dungeons: 397 ordinary ones, plus five anniversary cake dungeons (letter k). The Cake option defaults off. While it is off those five stay out of the known pool, the theoretical pool, the keyboard, and the openers. Theoretical solutions come from the dungeon rules (slot alphabets, filters, frogging, zombification). With Cake on, a second pass rewrites every chest (C) as cake (k) and never mixes the two.",
   "delimiter": "none",
   "caseInsensitive": false,
   "clueCaseSensitive": true,
@@ -19,7 +19,7 @@
   "rules": "script:rules/dungleon.js",
   "guessMode": "any",
   "gauntlet": { "floors": 3 },
-  "alphabet": "WAMKVBSsDTNOowtFZCcR",
+  "alphabet": "WAMKVBSsDTNOowtFZCcRk",
   "pools": { "theoretical": "generated" },
   "keyboard": {
     "rows": [
@@ -64,7 +64,8 @@
       "Z": { "label": "Zombie", "image": "https://www.dungleon.com/images/elements/big/zo.png", "sprite": { "index": 19 } },
       "C": { "label": "Chest", "image": "https://www.dungleon.com/images/elements/big/ch.png", "sprite": { "index": 2 } },
       "c": { "label": "Coin", "image": "https://www.dungleon.com/images/elements/big/co.png", "sprite": { "index": 3 } },
-      "R": { "label": "Relic", "image": "https://www.dungleon.com/images/elements/big/ty.png", "sprite": { "index": 15 } }
+      "R": { "label": "Relic", "image": "https://www.dungleon.com/images/elements/big/ty.png", "sprite": { "index": 15 } },
+      "k": { "label": "Cake", "image": "https://www.dungleon.com/images/elements/big/ca.png", "sprite": { "index": 20 } }
     }
   },
   "variants": [

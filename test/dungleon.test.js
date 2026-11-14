@@ -67,11 +67,18 @@ assert.notDeepStrictEqual(eng.feedbackDigits('CMFCS', 'WCCCS'), [1, 0, 0, 2, 2])
 });
 
 // Scratch in feedbackIds must not leak across calls.
-const known = knownText.split(/\s+/).filter(Boolean);
+const CAKE_WORDS = ['kAkSk', 'Akkkw', 'kWDkk', 'FMkkk', 'kZkNk'];
+const allKnown = knownText.split(/\s+/).filter(Boolean);
+const known = allKnown.filter(function (word) { return word.indexOf('k') < 0; });
+assert.strictEqual(allKnown.length, 402);
+assert.strictEqual(new Set(allKnown).size, 402);
 assert.strictEqual(known.length, 397);
 assert.strictEqual(new Set(known).size, 397);
-['WSoCSO', 'KACDCR', 'cAcccw', 'tWOCCo', 'ZVCFCN', 'ZToNOw', 'kAkSk', 'Akkkw'].forEach(function (word) {
-  assert.ok(known.indexOf(word) < 0, word);
+CAKE_WORDS.forEach(function (word) {
+  assert.ok(allKnown.indexOf(word) >= 0, word);
+});
+['WSoCSO', 'KACDCR', 'cAcccw', 'tWOCCo', 'ZVCFCN', 'ZToNOw'].forEach(function (word) {
+  assert.ok(allKnown.indexOf(word) < 0, word);
 });
 for (let i = 0; i < known.length; i += 17) {
   const secret = known[i];
@@ -95,6 +102,13 @@ assert.strictEqual(rules.validGuess(Pack.parseWord('sssss', pack), eng), true);
 assert.strictEqual(rules.validGuess(Pack.parseWord('WBB', pack), eng), false);
 assert.strictEqual(rules.validGuess(Pack.parseWord('bbbbb', pack), eng), false);
 
+assert.strictEqual(eng.pack.cake, false);
+assert.ok(eng.pack.alphabet.indexOf('k') < 0);
+assert.deepStrictEqual(eng.pack.keyboard.rows[3], ['C', 'c', 'R']);
+CAKE_WORDS.forEach(function (word) {
+  assert.ok(!eng.keyIdx.has(word), word);
+  assert.strictEqual(rules.validSolution(word), false, word);
+});
 assert.strictEqual(eng.nKnown, 397);
 assert.strictEqual(eng.theoreticalIdx.length, 3312);
 assert.strictEqual(eng.ruleDrift.length, 0);
@@ -217,4 +231,100 @@ rightParts.theoretical.forEach(function (i) {
   assert.notStrictEqual(word.charAt(0), 'A', word);
 });
 
-console.log('ok dungleon', eng.nKnown, 'known', eng.theoreticalIdx.length, 'theoretical');
+// Cake on: the five anniversary dungeons are known and generated, and a clue
+// that mentions k separates them. Chest dungeons stay in the pool. k sits in
+// the relic's slot; relic, frog, and dragon share that bottom row.
+const packOn = Pack.normalize(manifest, manifest.variants[0]);
+packOn.rulesImpl = rules;
+const engOn = Engine.create(packOn, { answers: knownText, guesses: '', options: { cake: true } });
+assert.strictEqual(engOn.pack.cake, true);
+assert.ok(engOn.pack.alphabet.indexOf('k') >= 0);
+assert.deepStrictEqual(engOn.pack.keyboard.rows, [
+  ['W', 'A', 'M', 'K', 'V'],
+  ['B', 'S', 's', 'T', 'N'],
+  ['O', 'o', 'w', 't', 'Z'],
+  ['c', 'C', 'k', 'F', 'D', 'R']
+]);
+assert.strictEqual(engOn.nKnown, 402);
+assert.strictEqual(engOn.ruleDrift.length, 0);
+assert.ok(engOn.theoreticalIdx.length > 3312);
+CAKE_WORDS.forEach(function (word) {
+  const idx = engOn.keyIdx.get(word);
+  assert.ok(idx !== undefined, word);
+  assert.ok(engOn.flags[idx].known, word);
+  assert.ok(engOn.flags[idx].theoretical, word);
+  assert.strictEqual(rules.validSolution(word, engOn), true, word);
+  assert.ok(word.indexOf('C') < 0, word);
+});
+// Stock chest forms of Akkkw and FMkkk already pass, so cake needed no count limit.
+assert.strictEqual(rules.validSolution('ACCCw'), true);
+assert.strictEqual(rules.validSolution('FMCCC'), true);
+// Dragon plus a last-slot chest is still illegal. The same shape with cake is not.
+assert.strictEqual(rules.validSolution('CWDCC'), false);
+assert.strictEqual(rules.validSolution('kWDkk', engOn), true);
+assert.strictEqual(rules.validSolution('AkCkw', engOn), false, 'chest and cake are never mixed');
+let cakeRelic = 0;
+engOn.theoreticalIdx.forEach(function (i) {
+  const word = engOn.keys[i];
+  if (word.indexOf('k') < 0) return;
+  assert.ok(word.indexOf('C') < 0, word);
+  if (word.indexOf('R') >= 0) cakeRelic++;
+});
+assert.ok(cakeRelic > 0, 'relic still occurs beside cake');
+
+function idsOn(word) {
+  const enc = engOn.encode(word);
+  assert.ok(!enc.err, word + ' ' + (enc.err || ''));
+  return enc.ids;
+}
+['kkkkk', 'kAkSk', 'Akkkw', 'kWDkk'].forEach(function (guess) {
+  CAKE_WORDS.forEach(function (solution) {
+    const fb = rules.feedback(guess, solution);
+    const pat = rules.feedbackIds(idsOn(guess), 0, idsOn(solution), 0, 5);
+    assert.strictEqual(pat, fb.pat, guess + ' vs ' + solution);
+  });
+});
+const cakeClue = engOn.makeClue('kkkkk', rules.feedback('kkkkk', 'Akkkw').digits);
+assert.strictEqual(engOn.consistentAllIndex(engOn.keyIdx.get('Akkkw'), [cakeClue]), true);
+assert.strictEqual(engOn.consistentAllIndex(engOn.keyIdx.get('kAkSk'), [cakeClue]), false);
+const cakeParts = engOn.partition([cakeClue]);
+assert.ok(cakeParts.known.indexOf(engOn.keyIdx.get('Akkkw')) >= 0);
+assert.ok(cakeParts.known.indexOf(engOn.keyIdx.get('kAkSk')) < 0);
+assert.ok(cakeParts.theoretical.indexOf(engOn.keyIdx.get('Akkkw')) >= 0);
+assert.ok(cakeParts.theoretical.indexOf(engOn.keyIdx.get('kAkSk')) < 0);
+
+// Gauntlet reads the same pools. Cake off cannot see k. Cake on keeps a floor
+// that shares k and drops one that shares nothing with the solved floor.
+assert.ok(!eng.keyIdx.has('kWDkk'));
+const Gauntlet = require(path.join(root, 'src/gauntlet.js'));
+const floorSpec = {
+  floors: [
+    { known: [engOn.keyIdx.get('kWDkk')], theoretical: [engOn.keyIdx.get('kWDkk')], solution: 'kWDkk' },
+    {
+      known: [engOn.keyIdx.get('FMkkk'), engOn.keyIdx.get('MVFOR')],
+      theoretical: [engOn.keyIdx.get('FMkkk'), engOn.keyIdx.get('MVFOR')]
+    },
+    { known: [engOn.keyIdx.get('kZkNk')], theoretical: [engOn.keyIdx.get('kZkNk')] }
+  ],
+  tokensOf: function (i) { return engOn.tokens[i]; },
+  tokensOfKey: function (key) { return Pack.parseWord(key, packOn); },
+  keyOf: function (i) { return engOn.keys[i]; },
+  layer: 'known',
+  order: Pack.alphabetTokens(packOn),
+  length: 5
+};
+assert.ok(engOn.keyIdx.has('MVFOR'), 'MVFOR shares nothing with kWDkk');
+const gview = Gauntlet.propagate(floorSpec);
+assert.deepStrictEqual(gview.floors[1].known.map(function (i) { return engOn.keys[i]; }), ['FMkkk']);
+assert.ok(gview.floors[1].known.indexOf(engOn.keyIdx.get('MVFOR')) < 0);
+
+rules.applyOptions(packOn, { cake: false });
+assert.strictEqual(packOn.cake, false);
+assert.deepStrictEqual(packOn.keyboard.rows[3], ['C', 'c', 'R']);
+assert.ok(packOn.alphabet.indexOf('k') < 0);
+rules.applyOptions(packOn, { cake: true });
+assert.deepStrictEqual(packOn.keyboard.rows[3], ['c', 'C', 'k', 'F', 'D', 'R']);
+assert.ok(packOn.alphabet.indexOf('k') >= 0);
+
+console.log('ok dungleon', eng.nKnown, 'known', eng.theoreticalIdx.length, 'theoretical',
+  'cake', engOn.nKnown, 'known', engOn.theoreticalIdx.length, 'theoretical');
