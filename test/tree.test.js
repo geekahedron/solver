@@ -438,6 +438,110 @@ check('opener candidates are capped by the score budget', function () {
   assert.strictEqual(Core.OPENER_GENERATED_CAP, 10);
 });
 
+function alphabetEntries(eng) {
+  return Pack.alphabetTokens(eng.pack).map(function (token) {
+    var id = eng.symId.has(token) ? eng.symId.get(token) : eng.symIdOf(token);
+    return { token: token, id: id };
+  });
+}
+
+check('any-mode guesses are a bounded sample, not alphabet^length', function () {
+  const eng = packOf(['aa', 'bb', 'cc'], []);
+  const skip = new Set(['aa', 'bb', 'cc']);
+  const once = Core.generateAnyGuesses({
+    U: eng.U, L: 2, rem: eng.knownIdx, alphabet: alphabetEntries(eng),
+    skip: function (w) { return skip.has(w); }, cap: 30
+  });
+  const twice = Core.generateAnyGuesses({
+    U: eng.U, L: 2, rem: eng.knownIdx, alphabet: alphabetEntries(eng),
+    skip: function (w) { return skip.has(w); }, cap: 30
+  });
+  assert.ok(once.guesses.length > 0 && once.guesses.length <= 30, once.guesses.length);
+  assert.deepStrictEqual(once.guesses.map(function (g) { return g.word; }), twice.guesses.map(function (g) { return g.word; }));
+  once.guesses.forEach(function (g) {
+    assert.strictEqual(g.word.length, 2, g.word);
+    assert.ok(!skip.has(g.word), g.word);
+    assert.strictEqual(g.ids.length, 2);
+  });
+  assert.ok(once.guesses.some(function (g) { return g.word === 'ab' || g.word === 'ba'; }), once.guesses.map(function (g) { return g.word; }).join(','));
+  const capped = Core.generateAnyGuesses({
+    U: eng.U, L: 2, rem: eng.knownIdx, alphabet: alphabetEntries(eng), cap: 3
+  });
+  assert.ok(capped.guesses.length <= 3);
+  assert.strictEqual(capped.capped, true);
+  assert.ok(Core.anyGuessCap(397) <= Core.ANY_GUESS_CAP);
+  assert.ok(Core.anyGuessCap(397) < Math.pow(26, 5));
+});
+
+check('any-mode sample includes the other case of a letter', function () {
+  const pack = Pack.fromCustom({
+    length: 2, alphabet: 'abAB', caseInsensitive: false, tokens: false, rule: 'wordle'
+  });
+  const eng = Engine.create(pack, { answers: 'aa\nbb\n', guesses: '' });
+  const gen = Core.generateAnyGuesses({
+    U: eng.U, L: 2, rem: eng.knownIdx, alphabet: alphabetEntries(eng),
+    skip: function (w) { return eng.keyIdx.has(w); }
+  });
+  const words = gen.guesses.map(function (g) { return g.word; });
+  assert.ok(words.some(function (w) { return /[A-Z]/.test(w) && /[a-z]/.test(w); }), words.slice(0, 20).join(','));
+});
+
+check('a non-listed guess outranks the answers when it splits them', function () {
+  const eng = packOf(['aa', 'bb', 'cc'], []);
+  const gen = Core.generateAnyGuesses({
+    U: eng.U, L: 2, rem: eng.knownIdx, alphabet: alphabetEntries(eng),
+    skip: function (w) { return eng.keyIdx.has(w); }, cap: 40
+  });
+  const scores = Core.scoreGuessWords({
+    U: eng.U, L: 2, K: eng.syms.length, rule: 'wordle',
+    rem: Int32Array.from(eng.knownIdx), pool: eng.knownIdx, extra: gen.guesses, keys: eng.keys
+  });
+  assert.ok(scores.length > 3);
+  assert.ok(!eng.keyIdx.has(scores[0].word), scores[0].word);
+  assert.ok(Math.abs(scores[0].ent - Math.log2(3)) < 1e-9, scores[0].ent);
+  const listed = scores.filter(function (s) { return eng.keyIdx.has(s.word); })[0];
+  assert.ok(scores[0].ent > listed.ent);
+  const chosen = Core.chooseOpenerList({
+    declared: false,
+    scores: scores.map(function (s, i) {
+      return { word: s.word, bits: s.ent, cand: s.cand, exp: s.exp, i: i };
+    })
+  });
+  assert.ok(!eng.keyIdx.has(chosen.words[0]), chosen.words[0]);
+});
+
+check('a tree can open on a guess that is not in the lists', function () {
+  const eng = packOf(['aa', 'bb', 'cc'], []);
+  const gen = Core.generateAnyGuesses({
+    U: eng.U, L: 2, rem: eng.knownIdx, alphabet: alphabetEntries(eng),
+    skip: function (w) { return eng.keyIdx.has(w); }, cap: 40
+  });
+  const ab = gen.guesses.filter(function (g) { return g.word === 'ab'; })[0];
+  assert.ok(ab, 'ab missing');
+  const big = new Uint16Array(eng.U.length + 2);
+  big.set(eng.U);
+  big[eng.U.length] = ab.ids[0];
+  big[eng.U.length + 1] = ab.ids[1];
+  const tree = Core.buildOpenerTree({
+    U: big,
+    L: 2,
+    K: eng.syms.length,
+    rule: 'wordle',
+    rem: eng.knownIdx,
+    guessIdx: eng.guessIdx.concat([eng.nWords]),
+    guessMode: 'any',
+    opener: eng.nWords,
+    openerIds: ab.ids,
+    budget: 2,
+    policy: 'worst',
+    hard: 'off'
+  });
+  assert.strictEqual(tree.summary.playedOut, true);
+  assert.strictEqual(tree.summary.maxDepth, 2);
+  assert.strictEqual(tree.summary.opener, eng.nWords);
+  assert.strictEqual(tree.summary.openerOutsidePool, false);
+});
+
 check('opener scan caps the extra starters', function () {
   const plan = Core.planOpenerScan({
     openers: [],

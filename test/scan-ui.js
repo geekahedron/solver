@@ -178,16 +178,34 @@ async function waitStatus(page, re, timeout) {
     const note4 = await page.$eval('#treeOpenerNote', el => el.textContent);
     assert(/none of them are legal/.test(note4), note4);
 
-    // Dungleon has no authored list. Quick picks are real dungeon guesses,
-    // ranked by expected information, and Scan openers reports those bits.
+    // Dungleon has no authored list. Any mode (the pack default) ranks a
+    // bounded sample of non-dungeon strings with the known dungeons.
+    // Dictionary mode stays on the listed dungeons, AWSCw first.
     await page.select('#packSel', 'dungleon');
     await page.waitForFunction(() => /397/.test(document.getElementById('remCount').textContent), { timeout: 30000 });
     await page.click('#pageModes button[data-page="tree"]');
+    await page.select('#treeGuessMode', 'any');
+    const anyPicks = await page.$$eval('#treePicks [data-pick]', els => els.map(e => e.getAttribute('data-pick')));
+    assert(anyPicks.length === 10, 'dungleon any picks ' + anyPicks.join(','));
+    assert(anyPicks.indexOf('slate') < 0 && anyPicks.indexOf('tarps') < 0, 'wordle openers on dungleon');
+    assert(anyPicks.some(w => /[A-Z]/.test(w)) && anyPicks.some(w => /[a-z]/.test(w)), 'dungleon case ' + anyPicks.join(','));
+    const anyRows = await page.$$eval('#treeOpenerTable tbody tr', rows => rows.map(r => ({
+      word: r.getAttribute('data-word'),
+      bits: r.children[2].textContent
+    })));
+    assert(anyRows.length === 10 && anyRows[0].word === anyPicks[0], JSON.stringify(anyRows[0]));
+    for (let i = 1; i < anyRows.length; i++) {
+      assert(parseFloat(anyRows[i].bits) <= parseFloat(anyRows[i - 1].bits) + 1e-9, 'any bits order ' + JSON.stringify(anyRows));
+    }
+    const anyNote = await page.$eval('#treeOpenerNote', el => el.textContent);
+    assert(/no opener list/.test(anyNote) && /expected information/.test(anyNote), anyNote);
+    assert(/any/.test(anyNote) && /alphabet/.test(anyNote), anyNote);
+    await page.screenshot({ path: shotDir + '/scan-dungleon-any-openers.png' });
+    await page.select('#treeGuessMode', 'dictionary');
     const dungPicks = await page.$$eval('#treePicks [data-pick]', els => els.map(e => e.getAttribute('data-pick')));
     assert(dungPicks.length === 10, 'dungleon picks ' + dungPicks.join(','));
     assert(dungPicks[0] === 'AWSCw', 'dungleon top ' + dungPicks[0]);
-    assert(dungPicks.indexOf('slate') < 0 && dungPicks.indexOf('tarps') < 0, 'wordle openers on dungleon');
-    assert(/[A-Z]/.test(dungPicks[0]) && /[a-z]/.test(dungPicks[0]), 'dungleon case ' + dungPicks[0]);
+    assert(anyPicks.some(w => dungPicks.indexOf(w) < 0), 'any mode should add a guess dictionary mode does not keep: ' + anyPicks.join(','));
     const dungRows = await page.$$eval('#treeOpenerTable tbody tr', rows => rows.map(r => ({
       word: r.getAttribute('data-word'),
       bits: r.children[2].textContent
@@ -198,6 +216,7 @@ async function waitStatus(page, re, timeout) {
     }
     const dungNote = await page.$eval('#treeOpenerNote', el => el.textContent);
     assert(/no opener list/.test(dungNote) && /expected information/.test(dungNote), dungNote);
+    assert(!/other alphabet/.test(dungNote), dungNote);
     await page.select('#treeHard', 'off');
     await page.select('#treePolicy', 'worst');
     await page.$eval('#treeBudget', el => { el.value = '6'; el.dispatchEvent(new Event('change', { bubbles: true })); });
@@ -207,6 +226,13 @@ async function waitStatus(page, re, timeout) {
     await page.click('#treeScan');
     st = await page.$eval('#treeStatus', el => el.textContent);
     assert(/Scan stopped/.test(st), 'dungleon stop ' + st);
+    await page.select('#treeGuessMode', 'any');
+    await page.click('#treeScan');
+    st = await waitStatus(page, /Trying/);
+    assert(st.indexOf(anyPicks[0]) >= 0 && /bits/.test(st) && /1\/10/.test(st), 'any scan ' + st);
+    await page.click('#treeScan');
+    st = await page.$eval('#treeStatus', el => el.textContent);
+    assert(/Scan stopped/.test(st), 'any stop ' + st);
     await page.screenshot({ path: shotDir + '/scan-dungleon-openers.png' });
 
     // Mobile: controls stay on screen and a tiny scan still completes.

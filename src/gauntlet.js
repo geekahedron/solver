@@ -48,6 +48,8 @@
  * stays in authored order. Otherwise the top 10 guesses are ranked against
  * that floor's filtered active-layer answers. The guess candidates are the
  * pack guess list, then those answers, capped the same way Scan caps them.
+ * Guess mode "any" also scores a bounded sample of alphabet strings that
+ * are not in the lists. Other modes leave that sample out.
  */
 (function (root) {
   'use strict';
@@ -308,7 +310,8 @@
         words: declared ? authored.slice() : [],
         bits: {},
         capped: false,
-        source: declared ? 'pack' : 'generated'
+        source: declared ? 'pack' : 'generated',
+        anyMixed: false
       };
     }
 
@@ -342,28 +345,81 @@
       for (e = 0; e < pool.length; e++) orderOf[pool[e]] = e;
     }
 
-    var ranked = pool.length ? Core.rankByInformation({
-      U: spec.U,
-      L: spec.L,
-      K: spec.K,
-      rule: spec.rule || 'wordle',
-      rem: rem instanceof Int32Array ? rem : Int32Array.from(rem),
-      pool: Int32Array.from(pool),
-      hooks: spec.hooks || null
-    }) : [];
     var records = [];
     var bits = Object.create(null);
     var r, word;
-    for (r = 0; r < ranked.length; r++) {
-      word = keyAt(ranked[r].idx);
-      bits[word] = ranked[r].ent;
-      records.push({
-        word: word,
-        bits: ranked[r].ent,
-        cand: ranked[r].cand || 0,
-        exp: ranked[r].exp || 0,
-        i: orderOf[ranked[r].idx] != null ? orderOf[ranked[r].idx] : r
+    var anyMixed = false;
+    // Dictionary / hard / answers-only stay on the lists. "any" also scores
+    // a bounded sample of alphabet strings that are not already listed.
+    // An authored opener list does not take that sample: its order is fixed.
+    if (!declared && spec.guessMode === 'any' && spec.alphabet && spec.alphabet.length && pool.length && Core.generateAnyGuesses) {
+      var skipWord = spec.skip || function () { return false; };
+      var generated = Core.generateAnyGuesses({
+        U: spec.U,
+        L: spec.L,
+        rem: rem,
+        alphabet: spec.alphabet,
+        format: spec.format,
+        cap: spec.anyCap == null ? Core.anyGuessCap(rem.length) : spec.anyCap,
+        skip: function (w) {
+          if (skipWord(w)) return true;
+          return false;
+        }
       });
+      if (generated.guesses.length) {
+        anyMixed = true;
+        // generated.capped means the alphabet sample hit its own bound.
+        // The listed-pool cap is the one the page already explains.
+        var mixed = Core.scoreGuessWords({
+          U: spec.U,
+          L: spec.L,
+          K: spec.K,
+          rule: spec.rule || 'wordle',
+          rem: rem instanceof Int32Array ? rem : Int32Array.from(rem),
+          pool: pool,
+          extra: generated.guesses,
+          hooks: spec.hooks || null,
+          keys: keys
+        });
+        var extraOrder = Object.create(null);
+        for (r = 0; r < generated.guesses.length; r++) extraOrder[generated.guesses[r].word] = pool.length + r;
+        for (r = 0; r < mixed.length; r++) {
+          word = mixed[r].word;
+          if (!word) continue;
+          bits[word] = mixed[r].ent;
+          records.push({
+            word: word,
+            bits: mixed[r].ent,
+            cand: mixed[r].cand || 0,
+            exp: mixed[r].exp || 0,
+            i: mixed[r].external
+              ? (extraOrder[word] != null ? extraOrder[word] : r)
+              : (orderOf[mixed[r].idx] != null ? orderOf[mixed[r].idx] : r)
+          });
+        }
+      }
+    }
+    if (!anyMixed) {
+      var ranked = pool.length ? Core.rankByInformation({
+        U: spec.U,
+        L: spec.L,
+        K: spec.K,
+        rule: spec.rule || 'wordle',
+        rem: rem instanceof Int32Array ? rem : Int32Array.from(rem),
+        pool: Int32Array.from(pool),
+        hooks: spec.hooks || null
+      }) : [];
+      for (r = 0; r < ranked.length; r++) {
+        word = keyAt(ranked[r].idx);
+        bits[word] = ranked[r].ent;
+        records.push({
+          word: word,
+          bits: ranked[r].ent,
+          cand: ranked[r].cand || 0,
+          exp: ranked[r].exp || 0,
+          i: orderOf[ranked[r].idx] != null ? orderOf[ranked[r].idx] : r
+        });
+      }
     }
     var chosen = Core.chooseOpenerList({
       declared: declared,
@@ -372,7 +428,13 @@
       capped: capped,
       limit: limit
     });
-    return { words: chosen.words, bits: bits, capped: chosen.capped, source: chosen.source };
+    return {
+      words: chosen.words,
+      bits: bits,
+      capped: chosen.capped,
+      source: chosen.source,
+      anyMixed: anyMixed && chosen.source === 'generated'
+    };
   };
 
   root.SolverGauntlet = Gauntlet;

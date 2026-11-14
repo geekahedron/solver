@@ -7,7 +7,7 @@
  *   preferred    — known while any remain, otherwise theoretical
  *
  * Guess modes (one pack, not separate games)
- *   any          — any tokens of pack length over the alphabet (suggestions stay on the lists; alphabet^n is not expanded)
+ *   any          — any tokens of pack length over the alphabet. Suggestions add a bounded sample of those strings (generateAnyGuesses); alphabet^n is not expanded.
  *   dictionary   — validGuess (listed words)
  *   hard         — validGuess and consistentAll, treating the candidate as the secret
  *   answersOnly  — still inside the active remaining layer

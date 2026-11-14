@@ -66,8 +66,11 @@
   var openerBits = Object.create(null);
   var openerSource = 'pack';
   var openerCapped = false;
+  var openerAnyMixed = false;
   var openerPackSeen = -1;
   var scanMarks = Object.create(null);
+  var treeExtraKeys = null;
+  var scoreExtraKeys = null;
 
   function inferGuessMode() {
     if (cfg.ansOnly) return 'answersOnly';
@@ -236,7 +239,7 @@
     lastTop = top;
     var tb = $('sugTable').tBodies[0];
     tb.innerHTML = top.map(function (s, i) {
-      var k = engine.keys[s.idx];
+      var k = scoreKey(s.idx);
       return '<tr data-key="' + esc(k) + '"' + (k === selectedKey ? ' class="sel"' : '') + '><td>' + (i + 1) + '</td><td>' + wordHTML(k) + '</td><td>' + stepsText(s) + '</td><td>' + fmt(s.exp, 2) +
         '</td><td>' + s.worst + '</td>' + maxStepsCell(s) + '<td>' + s.splits + '</td><td>' + fmt(s.ent, 2) + '</td><td>' + (s.cand ? '<span class="ok">✓</span>' : '') + '</td></tr>';
     }).join('');
@@ -273,7 +276,7 @@
     }
     $('bdTitle').innerHTML = '· ' + tilesHTML(g.syms, null);
     var scoredRow = null;
-    for (var si = 0; si < lastTop.length; si++) if (engine.keys[lastTop[si].idx] === g.key) scoredRow = lastTop[si];
+    for (var si = 0; si < lastTop.length; si++) if (scoreKey(lastTop[si].idx) === g.key) scoredRow = lastTop[si];
     var stepsBit = (scoredRow && stepsText(scoredRow) !== '–') ? (' · <b>' + stepsText(scoredRow) + '</b> expected guesses to solve') : '';
     var maxBit = '';
     if (scoredRow && scoredRow.maxExact && scoredRow.maxSteps != null) maxBit = ' · max steps ' + scoredRow.maxSteps;
@@ -385,13 +388,29 @@
       remaining: remaining, clues: clues, max: cfg.max
     });
     if (!bp.pool.length) { renderSuggestions([]); $('scoreStatus').textContent = 'No allowed guesses under these settings.'; return; }
+    var stepInfo = stepsPayload();
+    var probe = extendUniverse(remaining);
+    var scoreU = engine.U;
+    var scorePoolIdx = bp.pool.slice();
+    var pendingExtra = null;
+    if (probe) {
+      pendingExtra = probe.keys;
+      scoreU = probe.U;
+      var pi;
+      for (pi = 0; pi < probe.extra.length; pi++) scorePoolIdx.push(probe.base + pi);
+      if (stepInfo.dict) {
+        var grown = new Int32Array(stepInfo.dict.length + probe.extra.length);
+        grown.set(stepInfo.dict);
+        for (pi = 0; pi < probe.extra.length; pi++) grown[stepInfo.dict.length + pi] = probe.base + pi;
+        stepInfo.dict = grown;
+      }
+    }
     var isCand = new Uint8Array(engine.nWords);
     remaining.forEach(function (i) { if (i < isCand.length) isCand[i] = 1; });
     var id = ++reqId;
-    var stepInfo = stepsPayload();
     var msg = {
-      id: id, U: engine.U, L: cfg.L, K: engine.syms.length, rule: engine.feedbackRule,
-      rem: Int32Array.from(remaining), pool: Int32Array.from(bp.pool), isCand: isCand,
+      id: id, U: scoreU, L: cfg.L, K: engine.syms.length, rule: engine.feedbackRule,
+      rem: Int32Array.from(remaining), pool: Int32Array.from(scorePoolIdx), isCand: isCand,
       mode: cfg.mode, topN: cfg.top,
       guessIdx: stepInfo.dict || Int32Array.from(engine.guessIdx),
       dict: stepInfo.dict, clues: stepInfo.clues, hard: cfg.hard, guessMode: cfg.guessMode,
@@ -410,7 +429,7 @@
       msg.correctValues = engine.correctValues;
       msg.revealedValues = engine.revealedValues;
     }
-    var label = 'Scoring ' + bp.pool.length.toLocaleString() + ' guesses × ' + remaining.length.toLocaleString() + ' ' + layerLabel() +
+    var label = 'Scoring ' + scorePoolIdx.length.toLocaleString() + ' guesses × ' + remaining.length.toLocaleString() + ' ' + layerLabel() +
       (bp.pruned ? ' (pre-filtered from ' + bp.total.toLocaleString() + ' by letter coverage — raise “Max guesses to score” for a full search)' : '') +
       (cfg.mode === 'steps' ? ' · expected steps' : '') +
       (cfg.guarantee ? (' · guarantee ≤ ' + cfg.steps + ' steps') : '');
@@ -431,6 +450,7 @@
     }
     var done = function (top, ms, depth) {
       if (id !== reqId) return;
+      scoreExtraKeys = pendingExtra;
       renderSuggestions(top);
       var tail = '';
       if (cfg.mode === 'steps') {
@@ -444,7 +464,7 @@
         else if (exactN) tail = ' Steps are exact for this set.';
       }
       $('scoreStatus').textContent = label.replace('Scoring', 'Scored') + ' in ' + ms + ' ms.' + tail + depthNote(depth);
-      if ((autoSel || !selectedKey) && top.length) { $('bdGuess').value = engine.keys[top[0].idx]; analyze(engine.keys[top[0].idx], false); }
+      if ((autoSel || !selectedKey) && top.length) { $('bdGuess').value = scoreKey(top[0].idx); analyze(scoreKey(top[0].idx), false); }
       else if (selectedKey) analyze(selectedKey, false);
     };
     if (worker) { worker.terminate(); worker = null; }
@@ -606,21 +626,9 @@
       gauntletOpenerCache.gen = packGen;
       gauntletOpenerCache.map = Object.create(null);
     }
-    var sig = openerSig(rem) + (packDeclaredOpeners() ? ':d' : ':g');
+    var sig = openerSig(rem) + (packDeclaredOpeners() ? ':d' : ':g') + ':' + (cfg.guessMode || '');
     if (gauntletOpenerCache.map[sig]) return gauntletOpenerCache.map[sig];
-    var ranked = Gauntlet.rankOpeners(Core, {
-      U: engine.U,
-      L: cfg.L,
-      K: engine.syms.length,
-      rule: engine.feedbackRule,
-      hooks: engine.scoringHooks,
-      rem: rem,
-      guessIdx: engine.guessIdx,
-      keys: engine.keys,
-      lookup: function (w) { return engine.keyIdx.has(w) ? engine.keyIdx.get(w) : -1; },
-      declared: packDeclaredOpeners(),
-      authored: legalAuthoredOpeners()
-    });
+    var ranked = Gauntlet.rankOpeners(Core, openerRankSpec(rem, packDeclaredOpeners(), legalAuthoredOpeners()));
     gauntletOpenerCache.map[sig] = ranked;
     return ranked;
   }
@@ -755,6 +763,7 @@
       ? 'Openers come from this pack’s list, in that order. Bits are rescored against this floor’s ' + floor.active.length.toLocaleString() + ' answers.'
       : 'Top ' + ranked.words.length + ' by expected information against this floor’s ' + floor.active.length.toLocaleString() +
         ' answers: −∑ p log₂ p, the same score Scan openers uses.' +
+        (ranked.anyMixed ? ' Guess mode is any, so the sample also includes other alphabet strings, not only listed dungeons.' : '') +
         (ranked.capped ? ' The candidate list was capped so a large pool would not hang the page.' : '');
     return '<div class="tablewrap"><table class="data gauntlet-openers"><thead><tr><th>#</th><th>Opener</th><th>Bits</th></tr></thead><tbody>' +
       rows + '</tbody></table></div><p class="muted small">' + esc(note) + '</p>';
@@ -1687,7 +1696,12 @@
     $('cfgValid').value = cfg.valid; $('cfgHard').value = cfg.hard; $('cfgAnsOnly').checked = cfg.ansOnly;
     mirrorTreeRules();
     clues.forEach(function (c) { c.note = validityNote(c.key); });
-    renderClues(); scheduleScore(); saveState();
+    renderClues();
+    gauntletOpenerCache.gen = -1;
+    gauntletOpenerCache.map = Object.create(null);
+    refreshOpeners();
+    if (gauntletView) renderGauntletBoard(gauntletView);
+    scheduleScore(); saveState();
   });
   $('treeHard').addEventListener('change', function () {
     $('cfgHard').value = this.value;
@@ -1720,12 +1734,78 @@
   });
 
   function treeWord(gi) {
+    if (treeExtraKeys && treeExtraKeys[gi]) return treeExtraKeys[gi];
     if (gi == null || gi < 0 || !engine || !engine.keys[gi]) return ($('treeOpener').value || '').trim();
     return engine.keys[gi];
   }
   function treeSyms(gi) {
+    if (treeExtraKeys && treeExtraKeys[gi]) return Pack.parseWord(treeExtraKeys[gi], activePack());
     if (gi == null || gi < 0 || !engine || !engine.tokens[gi]) return Pack.parseWord($('treeOpener').value || '', activePack());
     return engine.tokens[gi];
+  }
+  function scoreKey(idx) {
+    if (scoreExtraKeys && scoreExtraKeys[idx]) return scoreExtraKeys[idx];
+    return engine.keys[idx];
+  }
+  function anyAlphabet() {
+    var tokens = Pack.alphabetTokens(engine.pack);
+    var out = [];
+    var i, tok, id;
+    for (i = 0; i < tokens.length; i++) {
+      tok = tokens[i];
+      if (engine.symId.has(tok)) id = engine.symId.get(tok);
+      else id = engine.symIdOf(tok);
+      out.push({ token: tok, id: id });
+    }
+    return out;
+  }
+  function openerRankSpec(rem, declared, authored) {
+    return {
+      U: engine.U,
+      L: cfg.L,
+      K: engine.syms.length,
+      rule: engine.feedbackRule,
+      hooks: engine.scoringHooks,
+      rem: rem,
+      guessIdx: engine.guessIdx,
+      keys: engine.keys,
+      lookup: function (w) { return engine.keyIdx.has(w) ? engine.keyIdx.get(w) : -1; },
+      declared: !!declared,
+      authored: authored || [],
+      guessMode: cfg.guessMode,
+      alphabet: cfg.guessMode === 'any' ? anyAlphabet() : null,
+      format: function (tokens) { return Pack.formatWord(tokens, engine.pack); },
+      skip: function (w) { return engine.keyIdx.has(w); }
+    };
+  }
+  // Extra alphabet strings for guess mode "any", appended to a copy of U.
+  // Dictionary mode returns null and the guess pools stay on the lists.
+  function extendUniverse(rem) {
+    if (!engine || cfg.guessMode !== 'any' || !rem || !rem.length) return null;
+    var alpha = anyAlphabet();
+    if (!alpha.length || !Core.generateAnyGuesses) return null;
+    var generated = Core.generateAnyGuesses({
+      U: engine.U,
+      L: cfg.L,
+      rem: rem,
+      alphabet: alpha,
+      format: function (tokens) { return Pack.formatWord(tokens, engine.pack); },
+      skip: function (w) { return engine.keyIdx.has(w); },
+      cap: Core.anyGuessCap(rem.length)
+    });
+    var extra = generated.guesses || [];
+    if (!extra.length) return null;
+    var L = cfg.L;
+    var big = new Uint16Array(engine.U.length + extra.length * L);
+    var keys = Object.create(null);
+    var base = engine.nWords;
+    var i, j;
+    big.set(engine.U);
+    for (i = 0; i < extra.length; i++) {
+      keys[base + i] = extra[i].word;
+      for (j = 0; j < L; j++) big[engine.U.length + i * L + j] = extra[i].ids[j] | 0;
+    }
+    return { U: big, keys: keys, extra: extra, base: base };
   }
   function treeGuessIdx() {
     if (cfg.valid === 'answers' && cfg.guessMode !== 'any' && cfg.guessMode !== 'hard' && cfg.guessMode !== 'answersOnly') {
@@ -1767,32 +1847,10 @@
     }
     return out;
   }
-  // Candidates for a generated opener list. Never alphabet^length
-  // (Dungleon guessMode "any" is about 20^5). Keep, in this order:
-  // the pack's guess list, authored openers already in the universe,
-  // then answers still in the set being solved. A pack with no guess
-  // list therefore ranks remaining solutions. Past OPENER_SCORE_CELLS
-  // (|candidates| × |answers|) keep a prefix so a large pool cannot hang.
-  function openerCandidateIdx() {
-    var seen = new Uint8Array(engine.nWords);
-    var out = [];
-    function add(idx) {
-      idx = idx | 0;
-      if (idx < 0 || idx >= engine.nWords || seen[idx]) return;
-      seen[idx] = 1;
-      out.push(idx);
-    }
-    var i, g = engine.guessIdx || [];
-    for (i = 0; i < g.length; i++) add(g[i]);
-    var authored = (engine.pack && engine.pack.openers) || [];
-    for (i = 0; i < authored.length; i++) {
-      var enc = engine.encode(authored[i]);
-      if (enc && !enc.err && engine.keyIdx.has(enc.key)) add(engine.keyIdx.get(enc.key));
-    }
-    for (i = 0; i < remaining.length; i++) add(remaining[i]);
-    var bounded = Core.boundOpenerCandidates(out, remaining.length, Core.OPENER_SCORE_CELLS);
-    return { idx: bounded, capped: bounded.length < out.length };
-  }
+  // Listed candidates stay the guess list, authored openers, and the
+  // answers still possible. Guess mode "any" also ranks a bounded sample
+  // of other alphabet strings (Core.generateAnyGuesses). Alphabet^length
+  // is never enumerated. Past OPENER_SCORE_CELLS the listed prefix is cut.
   function informationScores(indices) {
     if (!indices || !indices.length || !remaining.length) return [];
     return Core.rankByInformation({
@@ -1814,57 +1872,18 @@
       if (orderOf && orderOf[s.idx] == null) orderOf[s.idx] = i;
     }
   }
-  function scoreRecords(scores, orderOf) {
-    var out = [];
-    var i, s;
-    for (i = 0; i < scores.length; i++) {
-      s = scores[i];
-      out.push({
-        word: engine.keys[s.idx],
-        bits: s.ent,
-        cand: s.cand,
-        exp: s.exp,
-        i: orderOf && orderOf[s.idx] != null ? orderOf[s.idx] : i
-      });
-    }
-    return out;
-  }
   function refreshOpeners() {
     if (!$('treePicks') || !engine) return;
     scanMarks = Object.create(null);
     openerBits = Object.create(null);
     var declared = packDeclaredOpeners();
     var authored = legalAuthoredOpeners();
-    var scores = [];
-    var orderOf = Object.create(null);
-    openerCapped = false;
-    if (remaining.length) {
-      if (declared) {
-        var ai, aidx = [];
-        for (ai = 0; ai < authored.length; ai++) {
-          aidx.push(engine.keyIdx.get(authored[ai]));
-          orderOf[aidx[ai]] = ai;
-        }
-        scores = informationScores(aidx);
-      } else {
-        var cands = openerCandidateIdx();
-        openerCapped = cands.capped;
-        var ci;
-        for (ci = 0; ci < cands.idx.length; ci++) orderOf[cands.idx[ci]] = ci;
-        scores = informationScores(cands.idx);
-      }
-      rememberBits(scores, orderOf);
-    }
-    var chosen = Core.chooseOpenerList({
-      declared: declared,
-      authored: authored,
-      scores: scoreRecords(scores, orderOf),
-      capped: openerCapped,
-      limit: Core.OPENER_GENERATED_CAP
-    });
-    openerWords = chosen.words;
-    openerSource = chosen.source;
-    openerCapped = chosen.capped;
+    var ranked = Gauntlet.rankOpeners(Core, openerRankSpec(remaining, declared, authored));
+    openerWords = ranked.words || [];
+    openerBits = ranked.bits || Object.create(null);
+    openerSource = ranked.source || (declared ? 'pack' : 'generated');
+    openerCapped = !!ranked.capped;
+    openerAnyMixed = !!ranked.anyMixed;
     renderOpenerPicks();
     renderOpenerTable(openerWords);
     renderOpenerNote();
@@ -1917,10 +1936,13 @@
       return;
     }
     var capNote = openerCapped ? ' The candidate list was capped so a large pool would not hang the page.' : '';
+    var anyNote = openerAnyMixed
+      ? ' Guess mode is any, so this sample also includes other alphabet strings (case-sensitive when the pack is), not only listed dungeons. It is a bounded sample, not every possible string.'
+      : '';
     el.textContent = openerWords.length
       ? 'This pack has no opener list. These ' + openerWords.length +
         ' starters are the highest-information guesses among the pack’s guess list and the answers still possible.' +
-        capNote + ' ' + metric
+        anyNote + capNote + ' ' + metric
       : 'This pack has no opener list and no candidates to rank.' + capNote;
   }
   function setOpenerMark(word, text) {
@@ -2230,9 +2252,21 @@
   }
   function takeTreeSnap() {
     readTreeBudget();
+    var probe = extendUniverse(remaining);
+    var guessList = [];
+    var gsrc = treeGuessIdx();
+    var i;
+    treeExtraKeys = probe ? probe.keys : null;
+    for (i = 0; i < gsrc.length; i++) guessList.push(gsrc[i]);
+    if (probe) {
+      for (i = 0; i < probe.extra.length; i++) guessList.push(probe.base + i);
+    }
     return {
       rem: Int32Array.from(remaining),
-      guessIdx: Int32Array.from(treeGuessIdx()),
+      U: probe ? probe.U : engine.U,
+      K: engine.syms.length,
+      guessIdx: Int32Array.from(guessList),
+      extraKeys: treeExtraKeys,
       clues: clues.map(function (c) {
         return { ids: Array.prototype.slice.call(c.ids), pat: c.pat, digits: c.digits.slice() };
       }),
@@ -2255,9 +2289,15 @@
   }
   function treeMessage(enc, snap, id) {
     var idx = engine.keyIdx.has(enc.key) ? engine.keyIdx.get(enc.key) : -1;
+    if (idx < 0 && snap.extraKeys) {
+      var extraId;
+      for (extraId in snap.extraKeys) {
+        if (snap.extraKeys[extraId] === enc.key) { idx = extraId | 0; break; }
+      }
+    }
     var msg = {
       type: 'tree', id: id,
-      U: engine.U, L: cfg.L, K: engine.syms.length, rule: engine.feedbackRule,
+      U: snap.U || engine.U, L: cfg.L, K: snap.K || engine.syms.length, rule: engine.feedbackRule,
       rem: snap.rem, guessIdx: snap.guessIdx, clues: snap.clues,
       hard: snap.hard, guessMode: snap.guessMode,
       opener: idx, openerIds: Array.prototype.slice.call(enc.ids),
@@ -2292,7 +2332,12 @@
     }
     return Core.planOpenerScan({
       openers: openerWords,
-      has: function (w) { return engine.keyIdx.has(w); },
+      has: function (w) {
+        if (engine.keyIdx.has(w)) return true;
+        if (cfg.guessMode !== 'any') return false;
+        var enc = engine.encode(w);
+        return !!(enc && !enc.err);
+      },
       remaining: remWords,
       dict: dictWords,
       extraMaxRemaining: SCAN_EXTRA_MAX_REM,
