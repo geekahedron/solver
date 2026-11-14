@@ -75,7 +75,7 @@ I(g) = −∑ (nᵢ / N) log₂(nᵢ / N)
 
 `nᵢ` is the size of one feedback bucket and `N` is the number of answers still possible. The buckets are Analysis `scorePool` (`score.ent`) with the pack’s own feedback, so Dungleon’s five marks stay five marks. The known layer is used when that is the layer being solved. Otherwise the active remaining set is used.
 
-Candidates, kept from the front when the score is capped, are the pack’s guess list, any authored openers already in the universe, then the answers still possible. The page does not expand alphabet^length. Dungleon allows any 5-token guess, and 20^5 is not a candidate set. With no separate guess file the known solutions are the candidates. A product of candidates × answers above 1,500,000 keeps a prefix of that list so the page does not hang.
+Candidates, kept from the front when the score is capped, are the pack’s guess list, any authored openers already in the universe, then the answers still possible. Guess mode `any` also scores a bounded sample of other alphabet strings (frequent symbols, case partners, and sampled combinations), ranked by the same bits, and keeps the top 10. The page does not expand alphabet^length. Dungleon allows any 5-token guess, and 20^5 is not a candidate set. Dictionary mode does not add that sample. With no separate guess file the known solutions are the listed candidates. A product of listed candidates × answers above 1,500,000 keeps a prefix of that list so the page does not hang. The any-mode sample has its own smaller cap.
 
 Scan openers shows this entropy in a Bits column. When 16 or fewer answers remain it still continues with those answers, then other listed guesses, up to 40 more, after the opener list.
 
@@ -122,7 +122,7 @@ These are toggles on one pack, not separate games.
 
 | Mode | Suggestion pool |
 | --- | --- |
-| `any` | Any token list of the right length over the alphabet may be typed and analyzed. Suggestions stay on the loaded lists; the page does not enumerate alphabet^n. |
+| `any` | Any token list of the right length over the alphabet may be typed and analyzed. Suggestions add a bounded sample of other alphabet strings and rank them with the lists. The page does not enumerate alphabet^n. |
 | `dictionary` | `validGuess` (the loaded lists). The setup menu can still limit that to the answer list. |
 | `hard` | `validGuess` and `consistentAll`, treating the candidate as the secret. |
 | `answersOnly` | Only rows still inside the active remaining layer. |
@@ -162,7 +162,7 @@ The rule is that one entity (one token, in any slot) appears in every floor’s 
 - Clearing or editing a solution recomputes every floor below it. Earlier floors are not filtered by later ones.
 - An empty shared set means no candidate can satisfy the rule, so that layer’s list is empty.
 
-Each floor ranks openers against its filtered active-layer answers with the same expected-information score Scan openers uses (top 10). An authored opener list, if the pack has one, stays in that order and the bits are rescored on the floor’s answers. Dungleon has no authored list, so floors 2 and 3 get a new top 10 once their candidate pools narrow. The page does not expand alphabet^length, and the same candidate cap applies.
+Each floor ranks openers against its filtered active-layer answers with the same expected-information score Scan openers uses (top 10). An authored opener list, if the pack has one, stays in that order and the bits are rescored on the floor’s answers. Dungleon has no authored list, so floors 2 and 3 get a new top 10 once their candidate pools narrow. Guess mode `any` uses the same bounded alphabet sample as Scan openers. The page does not expand alphabet^length, and the same candidate cap applies.
 
 ## Renderers
 

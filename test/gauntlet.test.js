@@ -261,6 +261,52 @@ assert.ok(authored.bits.KZNCR > 0);
 const empty = Gauntlet.rankOpeners(Core, { rem: [], declared: false, keys: eng.keys });
 assert.deepStrictEqual(empty.words, []);
 
+function alphaOf(engine) {
+  return Pack.alphabetTokens(engine.pack).map(function (token) {
+    const id = engine.symId.has(token) ? engine.symId.get(token) : engine.symIdOf(token);
+    return { token: token, id: id };
+  });
+}
+const dictOpen = Gauntlet.rankOpeners(Core, {
+  U: eng.U, L: 5, K: eng.syms.length, rule: eng.feedbackRule, hooks: eng.scoringHooks,
+  rem: eng.knownIdx, guessIdx: eng.guessIdx, keys: eng.keys,
+  lookup: function (w) { return eng.keyIdx.has(w) ? eng.keyIdx.get(w) : -1; },
+  declared: false, guessMode: 'dictionary', alphabet: alphaOf(eng)
+});
+assert.strictEqual(dictOpen.words[0], 'AWSCw');
+assert.strictEqual(dictOpen.anyMixed, false);
+dictOpen.words.forEach(function (w) { assert.ok(eng.keyIdx.has(w), w); });
+assert.deepStrictEqual(dictOpen.words, full.words);
+
+const anyOpen = Gauntlet.rankOpeners(Core, {
+  U: eng.U, L: 5, K: eng.syms.length, rule: eng.feedbackRule, hooks: eng.scoringHooks,
+  rem: eng.knownIdx, guessIdx: eng.guessIdx, keys: eng.keys,
+  lookup: function (w) { return eng.keyIdx.has(w) ? eng.keyIdx.get(w) : -1; },
+  declared: false, guessMode: 'any', alphabet: alphaOf(eng),
+  skip: function (w) { return eng.keyIdx.has(w); },
+  format: function (tokens) { return tokens.join(''); }
+});
+assert.strictEqual(anyOpen.source, 'generated');
+assert.strictEqual(anyOpen.anyMixed, true);
+assert.strictEqual(anyOpen.words.length, 10);
+let anyPrev = Infinity;
+let nonDungeon = 0;
+anyOpen.words.forEach(function (w) {
+  assert.ok(anyOpen.bits[w] <= anyPrev + 1e-9, w + ' ' + anyOpen.bits[w]);
+  anyPrev = anyOpen.bits[w];
+  assert.strictEqual(eng.encode(w).key, w, w);
+  if (!eng.keyIdx.has(w)) {
+    nonDungeon++;
+    assert.strictEqual(rules.validSolution(w, eng), false, w);
+  }
+});
+assert.ok(nonDungeon >= 1, anyOpen.words.join(','));
+assert.ok(anyOpen.bits[anyOpen.words[0]] + 1e-9 >= dictOpen.bits.AWSCw, anyOpen.bits[anyOpen.words[0]]);
+console.log('any-mode openers:');
+anyOpen.words.forEach(function (w) {
+  console.log('  ' + w + '  ' + anyOpen.bits[w].toFixed(3) + ' bits  ' + (eng.keyIdx.has(w) ? 'listed dungeon' : 'not a listed dungeon'));
+});
+
 // Floor 1 solved as VWSCR (ggggg). Floor 2 guess AWSCw, clue rgGgr:
 // slot 1 is not A, slot 2 is W, slot 3 is S and the secret has another S,
 // slot 4 is C, slot 5 is not w. The dungeons are ?WSCS. They already share

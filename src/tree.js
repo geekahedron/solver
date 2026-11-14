@@ -23,6 +23,8 @@
  *   I(g) = -sum (n_i / N) * log2(n_i / N)
  * chooseOpenerList keeps an authored pack list in that order. With no authored
  * list it keeps the top OPENER_GENERATED_CAP candidates by that entropy.
+ * Guess mode "any" adds a bounded sample of alphabet strings that are not
+ * already in the lists (generateAnyGuesses). It does not enumerate alphabet^L.
  */
 (function (root) {
   'use strict';
@@ -806,6 +808,22 @@
   // Matches the English Wordle quick-pick count.
   Core.OPENER_GENERATED_CAP = 10;
 
+  // Guess mode "any" may play any length-L string over the alphabet. The
+  // opener sample is capped so a 20^5 dungeon alphabet is never enumerated.
+  // ANY_GUESS_CELLS bounds (sample size × answers) the same way scoring does.
+  Core.ANY_GUESS_CAP = 320;
+  Core.ANY_GUESS_CELLS = 400000;
+
+  Core.anyGuessCap = function (answerCount) {
+    var n = answerCount | 0;
+    var room;
+    if (n < 1) return Core.ANY_GUESS_CAP;
+    room = Math.floor(Core.ANY_GUESS_CELLS / n);
+    if (room < 1) room = 1;
+    if (room > Core.ANY_GUESS_CAP) return Core.ANY_GUESS_CAP;
+    return room;
+  };
+
   // |candidates| × |answers| past this keeps a prefix of the candidate list.
   // 397 Dungleon solutions scored against themselves sit under it. A generated
   // theoretical pool scored against itself does not, and is cut instead of
@@ -832,6 +850,308 @@
     var scores = Core.scorePool(U, L, spec.K | 0, spec.rule || 'wordle', rem, pool, isCand, null, spec.hooks);
     scores.sort(Core.sorters.entropy);
     return scores;
+  };
+
+  function casePartnerToken(token) {
+    var c;
+    if (!token || token.length !== 1) return '';
+    c = token.charCodeAt(0);
+    if (c >= 97 && c <= 122) return String.fromCharCode(c - 32);
+    if (c >= 65 && c <= 90) return String.fromCharCode(c + 32);
+    return '';
+  }
+
+  // Bounded strings for guess mode "any". Not alphabet^L.
+  // Frequencies come from the answers still possible. The sample is:
+  //   the most common symbol at each slot, and the second-most
+  //   repeats of the most common symbols (count probes)
+  //   every order of the L most common symbols when L! is small
+  //   combinations of those symbols, including the other case when the
+  //   alphabet has it, placed greedily and in frequency order
+  // spec.alphabet is [{ token, id }]. spec.skip(word) drops listed words.
+  // spec.format(tokens) prints a word; the default joins tokens.
+  // Returns { guesses: [{ word, ids, tokens }], capped }.
+  Core.generateAnyGuesses = function (spec) {
+    spec = spec || {};
+    var L = spec.L | 0;
+    var rem = spec.rem;
+    var U = spec.U;
+    var alphabet = spec.alphabet || [];
+    var cap = spec.cap == null ? Core.ANY_GUESS_CAP : (spec.cap | 0);
+    var out = [];
+    var capped = false;
+    if (cap < 1 || L < 1 || !U || !rem || !rem.length || !alphabet.length) {
+      return { guesses: out, capped: false };
+    }
+    var skip = spec.skip || function () { return false; };
+    var format = spec.format || function (tokens) { return tokens.join(''); };
+    var maxId = 0;
+    var i, id, r, base, j, sym, freq;
+    for (i = 0; i < alphabet.length; i++) {
+      id = alphabet[i].id | 0;
+      if (id > maxId) maxId = id;
+    }
+    var present = new Float64Array(maxId + 1);
+    var pos = new Float64Array((maxId + 1) * L);
+    var seenSym = new Int32Array(maxId + 1);
+    for (i = 0; i < seenSym.length; i++) seenSym[i] = -1;
+    var n = rem.length;
+    for (r = 0; r < n; r++) {
+      base = (rem[r] | 0) * L;
+      for (j = 0; j < L; j++) {
+        sym = U[base + j];
+        if (sym < 0 || sym > maxId) continue;
+        pos[sym * L + j]++;
+        if (seenSym[sym] !== r) { seenSym[sym] = r; present[sym]++; }
+      }
+    }
+    var ranked = [];
+    for (i = 0; i < alphabet.length; i++) {
+      id = alphabet[i].id | 0;
+      if (id < 0) continue;
+      ranked.push({ token: String(alphabet[i].token), id: id, p: present[id] || 0 });
+    }
+    ranked.sort(function (a, b) {
+      return (b.p - a.p) || (a.id - b.id) || (a.token < b.token ? -1 : (a.token > b.token ? 1 : 0));
+    });
+    if (!ranked.length) return { guesses: out, capped: false };
+
+    var freqKeep = 8;
+    if (freqKeep > ranked.length) freqKeep = ranked.length;
+    var poolMax = 12;
+    if (poolMax < L) poolMax = L;
+    if (poolMax > ranked.length) poolMax = ranked.length;
+    var pool = [];
+    var inPool = Object.create(null);
+    function addPool(entry) {
+      if (!entry || inPool[entry.id]) return;
+      inPool[entry.id] = 1;
+      pool.push(entry);
+    }
+    for (i = 0; i < ranked.length && pool.length < freqKeep; i++) addPool(ranked[i]);
+    var byToken = Object.create(null);
+    for (i = 0; i < ranked.length; i++) byToken[ranked[i].token] = ranked[i];
+    var seeded = pool.slice();
+    for (i = 0; i < seeded.length && pool.length < poolMax; i++) addPool(byToken[casePartnerToken(seeded[i].token)]);
+    for (i = 0; i < ranked.length && pool.length < poolMax; i++) addPool(ranked[i]);
+
+    var seenWord = Object.create(null);
+    function emit(tokens, ids) {
+      var word, row, k;
+      if (out.length >= cap) { capped = true; return false; }
+      if (!tokens || tokens.length !== L || !ids || ids.length !== L) return false;
+      word = format(tokens);
+      if (!word || seenWord[word] || skip(word)) return false;
+      seenWord[word] = 1;
+      row = [];
+      for (k = 0; k < L; k++) row.push(ids[k] | 0);
+      out.push({ word: word, ids: row, tokens: tokens.slice() });
+      return true;
+    }
+    function bestAt(posIndex, avoidId) {
+      var best = -1, placed = null, s;
+      for (s = 0; s < ranked.length; s++) {
+        if (avoidId != null && ranked[s].id === avoidId) continue;
+        freq = pos[ranked[s].id * L + posIndex];
+        if (!placed || freq > best || (freq === best && ranked[s].id < placed.id)) {
+          best = freq;
+          placed = ranked[s];
+        }
+      }
+      return placed;
+    }
+    function posWord(rank) {
+      var tokens = [], ids = [], p, placed;
+      for (p = 0; p < L; p++) {
+        placed = bestAt(p, null);
+        if (rank === 1 && placed) {
+          var second = bestAt(p, placed.id);
+          if (second) placed = second;
+        }
+        if (!placed) return;
+        tokens.push(placed.token);
+        ids.push(placed.id);
+      }
+      emit(tokens, ids);
+    }
+    function emitEntries(entries) {
+      var tokens = [], ids = [], p, item;
+      if (!entries || !entries.length) return;
+      for (p = 0; p < L; p++) {
+        item = entries[p % entries.length];
+        tokens.push(item.token);
+        ids.push(item.id);
+      }
+      emit(tokens, ids);
+    }
+    function bestPlace(entries) {
+      var used = [], place = new Array(L), e, p, best, bi, nAssign, tokens, ids, item, fill;
+      if (!entries || !entries.length) return;
+      nAssign = entries.length < L ? entries.length : L;
+      for (e = 0; e < nAssign; e++) {
+        best = -1;
+        bi = -1;
+        for (p = 0; p < L; p++) {
+          if (used[p]) continue;
+          freq = pos[entries[e].id * L + p];
+          if (bi < 0 || freq > best || (freq === best && p < bi)) { best = freq; bi = p; }
+        }
+        if (bi < 0) break;
+        used[bi] = 1;
+        place[bi] = entries[e];
+      }
+      tokens = [];
+      ids = [];
+      fill = entries[0];
+      for (p = 0; p < L; p++) {
+        item = place[p] || fill;
+        tokens.push(item.token);
+        ids.push(item.id);
+      }
+      emit(tokens, ids);
+    }
+    function permutations(entries) {
+      var nEnt = entries.length;
+      var used = [];
+      var cur = [];
+      function rec() {
+        var pi;
+        if (out.length >= cap) return;
+        if (cur.length === nEnt) { emitEntries(cur); return; }
+        for (pi = 0; pi < nEnt; pi++) {
+          if (used[pi]) continue;
+          used[pi] = 1;
+          cur.push(entries[pi]);
+          rec();
+          cur.pop();
+          used[pi] = 0;
+          if (out.length >= cap) return;
+        }
+      }
+      if (nEnt >= 1 && nEnt === L && L <= 5) rec();
+    }
+    function combinations(arr, k, visit) {
+      var cur = [];
+      function rec(start) {
+        var ci;
+        if (out.length >= cap) return;
+        if (cur.length === k) { visit(cur.slice()); return; }
+        for (ci = start; ci < arr.length; ci++) {
+          cur.push(arr[ci]);
+          rec(ci + 1);
+          cur.pop();
+          if (out.length >= cap) return;
+        }
+      }
+      if (k > 0 && k <= arr.length) rec(0);
+    }
+
+    posWord(0);
+    posWord(1);
+    var repN = pool.length < 8 ? pool.length : 8;
+    for (i = 0; i < repN; i++) {
+      var repTok = [], repIds = [];
+      for (j = 0; j < L; j++) { repTok.push(pool[i].token); repIds.push(pool[i].id); }
+      emit(repTok, repIds);
+    }
+    var head = pool.slice(0, Math.min(L, pool.length));
+    if (head.length === L && L <= 5) permutations(head);
+    else if (head.length) {
+      bestPlace(head);
+      var rot, rotated, ri;
+      for (rot = 0; rot < head.length && out.length < cap; rot++) {
+        rotated = [];
+        for (ri = 0; ri < head.length; ri++) rotated.push(head[(ri + rot) % head.length]);
+        emitEntries(rotated);
+      }
+    }
+    if (pool.length >= L) {
+      combinations(pool, L, function (combo) {
+        var rev;
+        bestPlace(combo);
+        emitEntries(combo);
+        rev = combo.slice().reverse();
+        emitEntries(rev);
+      });
+    }
+    var early = out.slice(0, 24);
+    var e, p, partner, swappedTokens, swappedIds;
+    for (e = 0; e < early.length && out.length < cap; e++) {
+      for (p = 0; p < L && out.length < cap; p++) {
+        partner = casePartnerToken(early[e].tokens[p]);
+        if (!partner || !byToken[partner]) continue;
+        swappedTokens = early[e].tokens.slice();
+        swappedIds = early[e].ids.slice();
+        swappedTokens[p] = byToken[partner].token;
+        swappedIds[p] = byToken[partner].id;
+        emit(swappedTokens, swappedIds);
+      }
+    }
+    return { guesses: out, capped: capped };
+  };
+
+  // Score universe indices and extra { word, ids } rows in one partition.
+  // Extra rows are appended to a copy of U. They are not answers (cand 0).
+  // Returns the entropy order from rankByInformation, with .word and .external.
+  Core.scoreGuessWords = function (spec) {
+    spec = spec || {};
+    var U = spec.U;
+    var L = spec.L | 0;
+    var rem = spec.rem;
+    var extra = spec.extra || [];
+    var pool = spec.pool || [];
+    if (!U || L < 1 || !rem || !rem.length) return [];
+    var nWords = (U.length / L) | 0;
+    var big = U;
+    var K = spec.K | 0;
+    var poolIdx = [];
+    var i, j, id, word;
+    for (i = 0; i < extra.length; i++) {
+      var ids = extra[i].ids || [];
+      for (j = 0; j < ids.length; j++) if ((ids[j] | 0) + 1 > K) K = (ids[j] | 0) + 1;
+    }
+    if (extra.length) {
+      big = new Uint16Array(U.length + extra.length * L);
+      big.set(U);
+      for (i = 0; i < extra.length; i++) {
+        var row = extra[i].ids || [];
+        for (j = 0; j < L; j++) big[U.length + i * L + j] = row[j] | 0;
+      }
+    }
+    for (i = 0; i < pool.length; i++) poolIdx.push(pool[i] | 0);
+    for (i = 0; i < extra.length; i++) poolIdx.push(nWords + i);
+    if (!poolIdx.length) return [];
+    var scores = Core.rankByInformation({
+      U: big,
+      L: L,
+      K: K,
+      rule: spec.rule,
+      rem: rem instanceof Int32Array ? rem : Int32Array.from(rem),
+      pool: Int32Array.from(poolIdx),
+      hooks: spec.hooks || null
+    });
+    var keys = spec.keys;
+    function keyAt(idx) {
+      if (typeof keys === 'function') return keys(idx) || '';
+      return keys ? (keys[idx] || '') : '';
+    }
+    var out = [];
+    for (i = 0; i < scores.length; i++) {
+      id = scores[i].idx | 0;
+      if (id >= nWords) word = extra[id - nWords].word;
+      else word = keyAt(id);
+      out.push({
+        word: word,
+        idx: id,
+        ent: scores[i].ent,
+        cand: scores[i].cand || 0,
+        exp: scores[i].exp || 0,
+        splits: scores[i].splits,
+        worst: scores[i].worst,
+        external: id >= nWords
+      });
+    }
+    return out;
   };
 
   // Keep a prefix of candidates when scoring every one against every answer
