@@ -1,7 +1,7 @@
 {
   "id": "dungleon",
   "name": "Dungleon",
-  "note": "Entity dungeon. Known answers are the official dungeons in prevsolutions.txt: six malformed 6-character lines are excluded and duplicates are merged. The file has 402 dungeons: 397 ordinary ones, plus five anniversary cake dungeons (letter k). The Cake option defaults off. While it is off those five stay out of the known pool, the theoretical pool, the keyboard, and the openers. Theoretical solutions come from the dungeon rules (slot alphabets, filters, frogging, zombification). With Cake on, a second pass rewrites every chest (C) as cake (k) and never mixes the two.",
+  "note": "Entity dungeon. Known answers are the official dungeons in prevsolutions.txt: six malformed 6-character lines are excluded and duplicates are merged. The file has 402 dungeons: 397 ordinary ones, plus five anniversary cake dungeons (letter k). The Cake option defaults off. While it is off those five stay out of the known pool, the theoretical pool, the keyboard, and the openers. Theoretical solutions come from the dungeon rules (slot alphabets, filters, frogging, zombification). With Cake on, a second pass rewrites every treasure (chest C, coin c, and relic R) as cake (k) and never mixes cake with treasure.",
   "delimiter": "none",
   "caseInsensitive": false,
   "clueCaseSensitive": true,

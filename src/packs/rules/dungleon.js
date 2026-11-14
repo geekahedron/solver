@@ -18,20 +18,26 @@
 // totals; frogging uses dungleon.pm's monster list, which does not include Z.
 // Z is only produced when a necromancer zombifies heroes.
 //
-// Cake (pack letter k, entity ca) is the anniversary stand-in for a chest.
-// It is off unless the caller passes { cake: true }. A cake dungeon is the
-// chest generator with every C rewritten to k. One dungeon never mixes C and k.
-// Coin rules stay on c: exactly one coin is illegal, and a dragon cannot
-// share a dungeon with a coin. Those are not chest rules, so cake does not
-// inherit them. Chest rules that still describe cake are copied across:
-// a warrior cannot be followed immediately by cake, and a troll cannot share
-// a dungeon with cake (cake counts as treasure). The dragon-plus-chest-in-the
-// last-slot ban (D.*C$) is not applied to cake. Gauntlet #70 floor 1 is
-// kWDkk, a dragon dungeon that ends in cake, and that ban would drop it.
-// No cake-only count limit was needed. Akkkw is ACCCw with C rewritten to k,
-// and FMkkk is tMCCC frogged to FMCCC; the stock chest filters already allow
-// both. kAkSk and kZkNk are the same kind of rewrite (CACSC, and CACNC
-// zombified).
+// Cake (pack letter k, entity ca) replaces every treasure, not only a chest.
+// It is off unless the caller passes { cake: true }. dungleon.pm is not in
+// this repo; the port of its filters is the treasure set. The troll ban is
+// /[CcR]/, so treasure is chest C, coin c, and relic R. The live client tags
+// those three buttons "award". A cake dungeon rewrites every treasure slot
+// to k and never keeps C, c, or R. The archive's five cake dungeons contain
+// none of those, so relic is not left in beside cake.
+//
+// Coin positions are treasure slots, so a dungeon that would have held coins
+// can be cake. The coin-count rule comes with them: exactly one coin is
+// illegal, and exactly one cake is illegal too. A warrior still cannot be
+// followed immediately by treasure, so not by cake. A troll still cannot
+// share a dungeon with treasure, so not with cake.
+//
+// Two dragon bans are not applied to cake. D.*C$ would drop a dragon dungeon
+// that ends in cake, and the coin ban c.*D|D.*c rewritten onto k would drop
+// the same dungeon because kWDkk has cake on both sides of the dragon.
+// Gauntlet #70 floor 1 is that dungeon. No separate cake count limit: the
+// five archive rows are ordinary treasure rewrites (ACCCw, tMCCC frogged to
+// FMCCC, CACSC, and CACNC zombified) plus that dragon exception.
 //
 // feedbackKind 'custom' tells the engine to score with this feedback instead
 // of the Wordle base-3 pattern.
@@ -68,22 +74,38 @@ var TROLL_TREASURE = /[CcR].*T|T.*[CcR]/;
 var TROLL_BEHIND = /[^WAMKV]T/;
 var DRAGON_COIN = /c.*D|D.*c/;
 var DRAGON_CHEST5 = /D.*C$/;
-var WARRIOR_BLOCKED_CAKE = /W[WAMVkc]/;
-var TROLL_TREASURE_CAKE = /[kcR].*T|T.*[kcR]/;
+// Treasure in the ported troll ban: chest, coin, relic.
+var TREASURE = { C: 1, c: 1, R: 1 };
+var WARRIOR_BLOCKED_CAKE = /W[WAMVk]/;
+var TROLL_TREASURE_CAKE = /k.*T|T.*k/;
+var ONE_CAKE = /^[^k]*k[^k]*$/;
 
 // Live on-screen keyboard, bottom row (dungleon.com /puzzle buttons):
 // Coins, Chest, Relic, Frog, Dragon. On a cake day the cake key takes the
-// relic's slot, not the chest's. Relic stays at the end of the row: cake
-// replaces C only, and a cake dungeon can still contain R. Frog and Dragon
-// move onto this row with them so the cake keyboard matches that bottom row.
-// The live button names are Coins, Chest, Relic, Frog, and Dragon. There is
-// no separate key, mimic, or tyrant entity in the pack or in that button list.
+// relic's slot, not the chest's. Relic stays on the row as a guess key.
+// Cake solutions do not contain it: relic is treasure, and no archived cake
+// dungeon places one beside cake. Frog and Dragon move onto this row so it
+// matches the live bottom row. Those button names are Coins, Chest, Relic,
+// Frog, and Dragon. There is no separate key, mimic, or tyrant entity.
 var CAKE_BOTTOM = ['c', 'C', 'k', 'F', 'D', 'R'];
 var CAKE_MOVED = { k: 1, c: 1, C: 1, F: 1, D: 1, R: 1 };
 
-var CAKE_SLOTS = SLOTS.map(function (row) {
-  return row.map(function (ch) { return ch === 'C' ? 'k' : ch; });
-});
+function slotsWithCake(rows) {
+  return rows.map(function (row) {
+    var out = [];
+    var seen = Object.create(null);
+    var i, token;
+    for (i = 0; i < row.length; i++) {
+      token = TREASURE[row[i]] ? 'k' : row[i];
+      if (seen[token]) continue;
+      seen[token] = 1;
+      out.push(token);
+    }
+    return out;
+  });
+}
+
+var CAKE_SLOTS = slotsWithCake(SLOTS);
 
 var builtOff = null;
 var builtOn = null;
@@ -208,13 +230,18 @@ function passesFilters(word, cake) {
   if (!DRAGON_OK.test(word)) return false;
   if (ORC_ALONE.test(word)) return false;
   if (GOBLIN_ALONE.test(word)) return false;
-  if (ONE_COIN.test(word)) return false;
   if (cake) {
+    if (ONE_CAKE.test(word)) return false;
     if (TROLL_TREASURE_CAKE.test(word)) return false;
-  } else if (TROLL_TREASURE.test(word)) return false;
+  } else {
+    if (ONE_COIN.test(word)) return false;
+    if (TROLL_TREASURE.test(word)) return false;
+  }
   if (TROLL_BEHIND.test(word)) return false;
-  if (DRAGON_COIN.test(word)) return false;
-  // Last-slot chest beside a dragon. Not applied to cake: kWDkk ends in cake.
+  // Dragon with a coin, and dragon with a chest in the last slot. Neither is
+  // applied to cake: kWDkk is a dragon dungeon that ends in cake, and it has
+  // cake on both sides of the dragon.
+  if (!cake && DRAGON_COIN.test(word)) return false;
   if (!cake && DRAGON_CHEST5.test(word)) return false;
   return true;
 }

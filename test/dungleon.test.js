@@ -232,8 +232,9 @@ rightParts.theoretical.forEach(function (i) {
 });
 
 // Cake on: the five anniversary dungeons are known and generated, and a clue
-// that mentions k separates them. Chest dungeons stay in the pool. k sits in
-// the relic's slot; relic, frog, and dragon share that bottom row.
+// that mentions k separates them. Treasure dungeons stay in the pool. Cake
+// rewrites chest, coin, and relic, so a cake solution contains none of them.
+// k sits in the relic's keyboard slot; relic stays there as a guess key.
 const packOn = Pack.normalize(manifest, manifest.variants[0]);
 packOn.rulesImpl = rules;
 const engOn = Engine.create(packOn, { answers: knownText, guesses: '', options: { cake: true } });
@@ -254,23 +255,24 @@ CAKE_WORDS.forEach(function (word) {
   assert.ok(engOn.flags[idx].known, word);
   assert.ok(engOn.flags[idx].theoretical, word);
   assert.strictEqual(rules.validSolution(word, engOn), true, word);
-  assert.ok(word.indexOf('C') < 0, word);
+  assert.ok(word.indexOf('C') < 0 && word.indexOf('c') < 0 && word.indexOf('R') < 0, word);
 });
-// Stock chest forms of Akkkw and FMkkk already pass, so cake needed no count limit.
+// Chest and coin forms already pass, so those cake rows did not need a new count limit.
 assert.strictEqual(rules.validSolution('ACCCw'), true);
 assert.strictEqual(rules.validSolution('FMCCC'), true);
+assert.strictEqual(rules.validSolution('WSccc'), true, 'three coins');
+assert.strictEqual(rules.validSolution('WSkkk', engOn), true, 'those coins rewritten to cake');
+assert.strictEqual(rules.validSolution('WSkBB', engOn), false, 'exactly one cake is illegal, same as one coin');
 // Dragon plus a last-slot chest is still illegal. The same shape with cake is not.
 assert.strictEqual(rules.validSolution('CWDCC'), false);
 assert.strictEqual(rules.validSolution('kWDkk', engOn), true);
 assert.strictEqual(rules.validSolution('AkCkw', engOn), false, 'chest and cake are never mixed');
-let cakeRelic = 0;
+assert.strictEqual(rules.validSolution('WSckk', engOn), false, 'coin and cake are never mixed');
 engOn.theoreticalIdx.forEach(function (i) {
   const word = engOn.keys[i];
   if (word.indexOf('k') < 0) return;
-  assert.ok(word.indexOf('C') < 0, word);
-  if (word.indexOf('R') >= 0) cakeRelic++;
+  assert.ok(word.indexOf('C') < 0 && word.indexOf('c') < 0 && word.indexOf('R') < 0, word);
 });
-assert.ok(cakeRelic > 0, 'relic still occurs beside cake');
 
 function idsOn(word) {
   const enc = engOn.encode(word);
