@@ -1,0 +1,19 @@
+name: Deploy to geekahedron.com
+on:
+  push:
+    branches: [master]
+    paths: ['src/**']
+  workflow_dispatch:
+concurrency:
+  group: deploy-solver
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  deploy:
+    if: github.repository == 'geekahedron/solver' && github.ref == 'refs/heads/master'
+    runs-on: [self-hosted, linux, geek-deploy]
+    timeout-minutes: 15
+    steps:
+      - name: Deploy src/ to tools/solver
+        run: ~/deploy/solver.sh "$GITHUB_SHA"
