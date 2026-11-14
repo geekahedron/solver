@@ -28,7 +28,7 @@
     mode: 'avg', hard: 'off', ansOnly: false, max: 12000, top: 15, notation: 'GYB',
     layer: 'known', guessMode: 'dictionary', page: 'both',
     guarantee: false, steps: 6, stepsTouched: false, treePolicy: 'worst',
-    nytAnswers: 'with-ed', nytGuesses: 'all', images: true, keyboardOpen: null };
+    nytAnswers: 'with-ed', nytGuesses: 'all', images: true, keyboardOpen: null, cake: false };
   var packId = 'nyt';
   var readyPackId = null;
   var keepPackWarn = false;
@@ -1057,7 +1057,9 @@
     $('cfgLayer').value = cfg.layer || 'known';
     $('cfgGuessMode').value = cfg.guessMode || inferGuessMode();
     if ($('cfgImages')) $('cfgImages').checked = cfg.images !== false;
+    if ($('cfgCake')) $('cfgCake').checked = !!cfg.cake;
     applyPage(cfg.page || 'both', true);
+    syncCakeOption();
   }
   function reportPack(keepClues) {
     if (keepPackWarn) keepPackWarn = false;
@@ -1083,6 +1085,7 @@
     document.body.classList.toggle('case-sensitive', !!(engine.pack && engine.pack.caseInsensitive === false));
     if ($('imagesToggleLabel')) $('imagesToggleLabel').hidden = !(engine.pack && engine.pack.appearance);
     if ($('cfgImages')) $('cfgImages').checked = cfg.images !== false;
+    syncCakeOption();
     $('packMsg').textContent = msg;
     var summary = ($('packSel').selectedOptions[0] || {}).textContent + ' · ' + engine.nKnown.toLocaleString() + ' answers';
     if (engine.pack.listSource) summary += ' · ' + engine.guessIdx.length.toLocaleString() + ' guesses';
@@ -1281,8 +1284,34 @@
     $('ansText').value = String(answersText || '').trim();
     $('guessText').value = String(guessesText || '').trim();
     pack.rulesImpl = rules;
-    engine = window.SolverEngine.create(pack, { answers: answersText || '', guesses: guessesText || '' });
+    engine = window.SolverEngine.create(pack, {
+      answers: answersText || '',
+      guesses: guessesText || '',
+      options: { cake: !!cfg.cake }
+    });
     reportPack(keepClues);
+  }
+  function cakePackActive() {
+    return !!(engine && engine.pack && engine.pack.id === 'dungleon');
+  }
+  function syncCakeOption() {
+    var el = $('cakeOption');
+    if (!el) return;
+    el.hidden = !cakePackActive();
+    if ($('cfgCake')) $('cfgCake').checked = !!cfg.cake;
+  }
+  function remountActivePack() {
+    if (!engine || !engine.pack || !engine.pack.rulesImpl) return;
+    cancelScore();
+    gauntletOpenerCache.gen = -1;
+    gauntletOpenerCache.map = Object.create(null);
+    var pack = engine.pack;
+    engine = window.SolverEngine.create(pack, {
+      answers: $('ansText').value,
+      guesses: $('guessText').value,
+      options: { cake: !!cfg.cake }
+    });
+    reportPack(true);
   }
   function failRemotePack(err, previousReady) {
     var why = remoteErrorText(err);
@@ -3628,6 +3657,12 @@
     syncKeyboardOpen();
     saveState();
   });
+  if ($('cfgCake')) $('cfgCake').addEventListener('change', function () {
+    cfg.cake = this.checked;
+    saveState();
+    if (cakePackActive()) remountActivePack();
+    else syncCakeOption();
+  });
   if ($('cfgImages')) $('cfgImages').addEventListener('change', function () {
     cfg.images = this.checked;
     renderClues();
@@ -3787,7 +3822,7 @@
   function init() {
     var st = null; try { st = JSON.parse(localStorage.getItem(LS_STATE) || 'null'); } catch (e) {}
     if (st && st.cfg) {
-        ['mode', 'hard', 'ansOnly', 'max', 'top', 'notation', 'valid', 'layer', 'guessMode', 'page', 'guarantee', 'steps', 'stepsTouched', 'treePolicy', 'nytAnswers', 'nytGuesses', 'images', 'keyboardOpen'].forEach(function (k) {
+        ['mode', 'hard', 'ansOnly', 'max', 'top', 'notation', 'valid', 'layer', 'guessMode', 'page', 'guarantee', 'steps', 'stepsTouched', 'treePolicy', 'nytAnswers', 'nytGuesses', 'images', 'keyboardOpen', 'cake'].forEach(function (k) {
         if (st.cfg[k] !== undefined) cfg[k] = st.cfg[k];
       });
       if (!st.cfg.guessMode) cfg.guessMode = inferGuessMode();

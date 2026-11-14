@@ -41,14 +41,16 @@ const DUNGLEON = {
   Z: ['Zombie', 'zo'],
   C: ['Chest', 'ch'],
   c: ['Coin', 'co'],
-  R: ['Relic', 'ty']
+  R: ['Relic', 'ty'],
+  k: ['Cake', 'ca']
 };
 
 check('dungleon maps every alphabet letter to its sprite cell and big image', function () {
   const manifest = readPack('dungleon.json');
   const pack = Pack.normalize(manifest, manifest.variants[0]);
   const letters = Array.from(manifest.alphabet);
-  assert.strictEqual(letters.length, 20);
+  assert.strictEqual(letters.length, 21);
+  assert.strictEqual(letters[letters.length - 1], 'k');
   assert.ok(pack.appearance && pack.appearance.sheet);
   assert.strictEqual(pack.appearance.sheet.columns, 21);
   assert.strictEqual(pack.appearance.sheet.rows, 1);
@@ -76,7 +78,9 @@ check('dungleon maps every alphabet letter to its sprite cell and big image', fu
   assert.strictEqual(pack.appearance.entities.S.label, 'Skeleton');
   assert.strictEqual(pack.appearance.entities.s.label, 'Spider');
   assert.notStrictEqual(pack.appearance.entities.S.image, pack.appearance.entities.s.image);
-  assert.ok(!pack.appearance.entities.ca && !pack.appearance.entities.k, 'cake stays out of the pack alphabet');
+  assert.ok(!pack.appearance.entities.ca, 'cake is the letter k, mapped onto the existing ca frame');
+  assert.strictEqual(pack.appearance.entities.k.sprite.index, SHEET.indexOf('ca'));
+  assert.strictEqual(pack.appearance.sheet.cells[pack.appearance.entities.k.sprite.index], 'ca');
 });
 
 check('drops unsafe image urls and keeps the letter path empty', function () {

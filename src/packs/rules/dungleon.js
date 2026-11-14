@@ -18,6 +18,27 @@
 // totals; frogging uses dungleon.pm's monster list, which does not include Z.
 // Z is only produced when a necromancer zombifies heroes.
 //
+// Cake (pack letter k, entity ca) replaces every treasure, not only a chest.
+// It is off unless the caller passes { cake: true }. dungleon.pm is not in
+// this repo; the port of its filters is the treasure set. The troll ban is
+// /[CcR]/, so treasure is chest C, coin c, and relic R. The live client tags
+// those three buttons "award". A cake dungeon rewrites every treasure slot
+// to k and never keeps C, c, or R. The archive's five cake dungeons contain
+// none of those, so relic is not left in beside cake.
+//
+// Coin positions are treasure slots, so a dungeon that would have held coins
+// can be cake. The coin-count rule comes with them: exactly one coin is
+// illegal, and exactly one cake is illegal too. A warrior still cannot be
+// followed immediately by treasure, so not by cake. A troll still cannot
+// share a dungeon with treasure, so not with cake.
+//
+// Two dragon bans are not applied to cake. D.*C$ would drop a dragon dungeon
+// that ends in cake, and the coin ban c.*D|D.*c rewritten onto k would drop
+// the same dungeon because kWDkk has cake on both sides of the dragon.
+// Gauntlet #70 floor 1 is that dungeon. No separate cake count limit: the
+// five archive rows are ordinary treasure rewrites (ACCCw, tMCCC frogged to
+// FMCCC, CACSC, and CACNC zombified) plus that dragon exception.
+//
 // feedbackKind 'custom' tells the engine to score with this feedback instead
 // of the Wordle base-3 pattern.
 
@@ -53,8 +74,43 @@ var TROLL_TREASURE = /[CcR].*T|T.*[CcR]/;
 var TROLL_BEHIND = /[^WAMKV]T/;
 var DRAGON_COIN = /c.*D|D.*c/;
 var DRAGON_CHEST5 = /D.*C$/;
+// Treasure in the ported troll ban: chest, coin, relic.
+var TREASURE = { C: 1, c: 1, R: 1 };
+var WARRIOR_BLOCKED_CAKE = /W[WAMVk]/;
+var TROLL_TREASURE_CAKE = /k.*T|T.*k/;
+var ONE_CAKE = /^[^k]*k[^k]*$/;
 
-var built = null;
+// Live on-screen keyboard, bottom row (dungleon.com /puzzle buttons):
+// Coins, Chest, Relic, Frog, Dragon. On a cake day the cake key takes the
+// relic's slot, not the chest's. Relic stays on the row as a guess key.
+// Cake solutions do not contain it: relic is treasure, and no archived cake
+// dungeon places one beside cake. Frog and Dragon move onto this row so it
+// matches the live bottom row. Those button names are Coins, Chest, Relic,
+// Frog, and Dragon. There is no separate key, mimic, or tyrant entity.
+var CAKE_BOTTOM = ['c', 'C', 'k', 'F', 'D', 'R'];
+var CAKE_MOVED = { k: 1, c: 1, C: 1, F: 1, D: 1, R: 1 };
+
+function slotsWithCake(rows) {
+  return rows.map(function (row) {
+    var out = [];
+    var seen = Object.create(null);
+    var i, token;
+    for (i = 0; i < row.length; i++) {
+      token = TREASURE[row[i]] ? 'k' : row[i];
+      if (seen[token]) continue;
+      seen[token] = 1;
+      out.push(token);
+    }
+    return out;
+  });
+}
+
+var CAKE_SLOTS = slotsWithCake(SLOTS);
+
+var builtOff = null;
+var builtOn = null;
+var optionBases = typeof WeakMap === 'function' ? new WeakMap() : null;
+var optionBaseList = [];
 
 // Scratch for feedbackIds. Ids are small; grow if a pack ever exceeds this.
 var SL = new Int16Array(256);
@@ -161,22 +217,32 @@ exports.feedbackIds = function (g, go, a, ao, L) {
   return p;
 };
 
-function passesFilters(word) {
+function passesFilters(word, cake) {
   if (!/[WAM]/.test(word)) return false;
   if (!/[BSsDTNOowt]/.test(word)) return false;
   if (SOLO_DUP.test(word)) return false;
   if (ARCHER_MONSTER.test(word)) return false;
-  if (WARRIOR_BLOCKED.test(word)) return false;
+  if (cake) {
+    if (WARRIOR_BLOCKED_CAKE.test(word)) return false;
+  } else if (WARRIOR_BLOCKED.test(word)) return false;
   if (!BATS_OK.test(word)) return false;
   if (!SPIDERS_OK.test(word)) return false;
   if (!DRAGON_OK.test(word)) return false;
   if (ORC_ALONE.test(word)) return false;
   if (GOBLIN_ALONE.test(word)) return false;
-  if (ONE_COIN.test(word)) return false;
-  if (TROLL_TREASURE.test(word)) return false;
+  if (cake) {
+    if (ONE_CAKE.test(word)) return false;
+    if (TROLL_TREASURE_CAKE.test(word)) return false;
+  } else {
+    if (ONE_COIN.test(word)) return false;
+    if (TROLL_TREASURE.test(word)) return false;
+  }
   if (TROLL_BEHIND.test(word)) return false;
-  if (DRAGON_COIN.test(word)) return false;
-  if (DRAGON_CHEST5.test(word)) return false;
+  // Dragon with a coin, and dragon with a chest in the last slot. Neither is
+  // applied to cake: kWDkk is a dragon dungeon that ends in cake, and it has
+  // cake on both sides of the dragon.
+  if (!cake && DRAGON_COIN.test(word)) return false;
+  if (!cake && DRAGON_CHEST5.test(word)) return false;
   return true;
 }
 
@@ -184,9 +250,10 @@ function zombify(word) {
   return word.replace(/[WAM]/g, 'Z');
 }
 
-function generateList() {
+function generateList(cake) {
   var results = [];
-  var s0 = SLOTS[0], s1 = SLOTS[1], s2 = SLOTS[2], s3 = SLOTS[3], s4 = SLOTS[4];
+  var slots = cake ? CAKE_SLOTS : SLOTS;
+  var s0 = slots[0], s1 = slots[1], s2 = slots[2], s3 = slots[3], s4 = slots[4];
   var i0, i1, i2, i3, i4, word;
   for (i0 = 0; i0 < s0.length; i0++) {
     for (i1 = 0; i1 < s1.length; i1++) {
@@ -194,7 +261,7 @@ function generateList() {
         for (i3 = 0; i3 < s3.length; i3++) {
           for (i4 = 0; i4 < s4.length; i4++) {
             word = s0[i0] + s1[i1] + s2[i2] + s3[i3] + s4[i4];
-            if (passesFilters(word)) results.push(word);
+            if (passesFilters(word, cake)) results.push(word);
           }
         }
       }
@@ -228,25 +295,96 @@ function generateList() {
   return finalList;
 }
 
-function build() {
-  if (built) return built;
-  var list = generateList();
-  built = { list: list, set: new Set(list) };
-  return built;
+function cakeWanted(ctx) {
+  return !!(ctx && ctx.pack && ctx.pack.cake);
 }
 
-exports.generateSolutions = function () {
-  return build().list.slice();
+function build(cake) {
+  if (cake) {
+    if (builtOn) return builtOn;
+    builtOn = { list: generateList(true), set: null };
+    builtOn.set = new Set(builtOn.list);
+    return builtOn;
+  }
+  if (builtOff) return builtOff;
+  builtOff = { list: generateList(false), set: null };
+  builtOff.set = new Set(builtOff.list);
+  return builtOff;
+}
+
+function rememberBase(pack) {
+  var base = null;
+  var i;
+  if (optionBases) base = optionBases.get(pack);
+  else {
+    for (i = 0; i < optionBaseList.length; i++) {
+      if (optionBaseList[i].pack === pack) { base = optionBaseList[i].base; break; }
+    }
+  }
+  if (base) return base;
+  var alphabet = String(pack.alphabet || '');
+  if (alphabet.indexOf('k') < 0) alphabet += 'k';
+  var rows = [];
+  if (pack.keyboard && pack.keyboard.rows) {
+    pack.keyboard.rows.forEach(function (row) {
+      var kept = [];
+      row.forEach(function (sym) { if (sym !== 'k') kept.push(sym); });
+      if (kept.length) rows.push(kept);
+    });
+  }
+  base = { alphabet: alphabet, rows: rows };
+  if (optionBases) optionBases.set(pack, base);
+  else optionBaseList.push({ pack: pack, base: base });
+  return base;
+}
+
+function rowsFor(base, cake) {
+  if (!cake) {
+    return base.rows.map(function (row) { return row.slice(); });
+  }
+  var rows = [];
+  base.rows.forEach(function (row) {
+    var kept = [];
+    row.forEach(function (sym) { if (!CAKE_MOVED[sym]) kept.push(sym); });
+    if (kept.length) rows.push(kept);
+  });
+  rows.push(CAKE_BOTTOM.slice());
+  return rows;
+}
+
+// Cake defaults off. Off drops k from the alphabet and the keyboard, so the
+// known file's anniversary rows never enter the pools. On puts k in the
+// relic's slot on the bottom row and keeps relic available.
+exports.applyOptions = function (pack, options) {
+  if (!pack) return pack;
+  var cake = !!(options && options.cake);
+  var base = rememberBase(pack);
+  pack.cake = cake;
+  pack.alphabet = cake ? base.alphabet : base.alphabet.replace(/k/g, '');
+  pack.alphabetSet = new Set(Array.from(pack.alphabet));
+  if (base.rows.length) pack.keyboard = { rows: rowsFor(base, cake) };
+  return pack;
+};
+
+exports.generateSolutions = function (ctx) {
+  var off = build(false).list;
+  if (!cakeWanted(ctx)) return off.slice();
+  var on = build(true).list;
+  var out = off.slice();
+  var i;
+  for (i = 0; i < on.length; i++) out.push(on[i]);
+  return out;
 };
 
 exports.validGuess = function (word, ctx) {
   return ctx.structural(word);
 };
 
-exports.validSolution = function (word) {
+exports.validSolution = function (word, ctx) {
   if (!word || word.length !== 5) return false;
   var s = typeof word === 'string' ? word : word.join('');
-  return build().set.has(s);
+  if (build(false).set.has(s)) return true;
+  return cakeWanted(ctx) && build(true).set.has(s);
 };
 
 exports.consistent = function (guess, clue, secret, ctx) {

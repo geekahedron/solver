@@ -117,6 +117,14 @@
     eng.customFeedback = !!(eng.rules && eng.rules.feedbackKind === 'custom' && typeof eng.rules.feedback === 'function');
     eng.feedbackSource = eng.customFeedback ? (eng.rules._source || null) : null;
 
+    // Pack scripts may drop optional letters (Dungleon cake) before pools load.
+    // Default options keep today's pools. lists.options overrides pack.gameOptions.
+    if (eng.rules && typeof eng.rules.applyOptions === 'function') {
+      var optionBag = pack.gameOptions || {};
+      if (lists && lists.options) optionBag = lists.options;
+      eng.rules.applyOptions(pack, optionBag);
+    }
+
     Pack.splitEntries(lists.answers, pack).forEach(function (w) { add(w, 'known'); });
     Pack.splitEntries(lists.guesses, pack).forEach(function (w) { add(w, 'guess'); });
     if (theoFrom === 'generated' && typeof eng.rules.generateSolutions === 'function') {

@@ -177,7 +177,7 @@ Each floor ranks openers against its filtered active-layer answers with the same
 | `clues/arrows-lr` | `· ← →` for a future left/right clue |
 | `clues/mastermind-pips` | A `2B1W` style summary if marks are 0/1/2 |
 
-Dungleon ships as `src/packs/dungleon.json`. Its known list is `dungleon-prevsolutions.txt` (397 unique official dungeons from the previous-solutions history, not the longer generated set). Rules are in `rules/dungleon.js`. It is the only pack that sets `gauntlet` (three floors; see above). Purrdle still needs a real pack. It is not shipped.
+Dungleon ships as `src/packs/dungleon.json`. Its known list is `dungleon-prevsolutions.txt` (397 unique official dungeons from the previous-solutions history, plus five anniversary cake dungeons that the Cake option leaves out until it is turned on, not the longer generated set). Rules are in `rules/dungleon.js`. It is the only pack that sets `gauntlet` (three floors; see above). Purrdle still needs a real pack. It is not shipped.
 
 ## Appearance
 
